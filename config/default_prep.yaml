@@ -1,0 +1,19 @@
+load_zip: ../dataset/GEFCom2014-L_V2
+solar_zip: ../dataset/GEFCom2014-S_V2
+out_dir: data/processed
+
+load_task_id: 1
+solar_task_id: 15
+
+add_time_features: true
+solar_decumulate: true
+
+train_ratio: 0.70
+val_ratio: 0.10
+test_ratio: 0.20
+
+scaler_kind: standard
+
+# Realistic default for load: only time features are known in the future
+load_future_include_weather: false
+

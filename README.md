@@ -64,3 +64,39 @@ python -m src.data_loaders.solar_track_loader \
 ```bash
 pytest -q
 ```
+
+## Phase A (Data Pipeline) - A2 (One-Command Orchestrator)
+
+Phase A2 adds a single orchestrator that runs:
+- load + solar ingestion
+- optional time features
+- solar decumulation
+- per-zone chronological split (train/val/test)
+- leakage-safe scaling (fit on train only)
+- persistence of parquet + scalers + `dataset_manifest.json`
+
+### Run (recommended)
+
+```bash
+python -m src.prepare_data --config config/default_prep.yaml
+```
+
+### Run (flags only)
+
+```bash
+python -m src.prepare_data \
+  --load_zip ../dataset/GEFCom2014-L_V2 \
+  --solar_zip ../dataset/GEFCom2014-S_V2 \
+  --out_dir data/processed \
+  --load_task_id 1 \
+  --solar_task_id 15 \
+  --solar_decumulate \
+  --add_time_features \
+  --scaler_kind standard
+```
+
+Artifacts written:
+- `data/processed/load/` (`clean.parquet`, `train.parquet`, `val.parquet`, `test.parquet`, and `_scaled` variants)
+- `data/processed/solar/` (same set)
+- `data/processed/scalers/*.joblib`
+- `data/processed/dataset_manifest.json`
