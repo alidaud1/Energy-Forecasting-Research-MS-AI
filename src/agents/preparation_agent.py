@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Dict
+
+import pandas as pd
+
+from .base_agent import BaseAgent
+
+
+class PreparationAgent(BaseAgent):
+    """
+    Verifies Phase A artifacts from dataset_manifest.json and signals readiness.
+    """
+
+    def __init__(self, cfg, pool):
+        super().__init__(cfg, pool)
+        self.subscribe(topics=["prepare"], start_from="latest")
+
+    def _resolve_path(self, manifest_path: Path, artifact_path: str) -> Path:
+        p = Path(artifact_path)
+        if p.is_absolute():
+            return p
+        # Try resolving relative to the manifest directory first.
+        cand1 = (manifest_path.parent / p).resolve()
+        if cand1.exists():
+            return cand1
+
+        # Fallback: resolve relative to the current working directory (project root in typical runs).
+        cand2 = (Path.cwd() / p).resolve()
+        if cand2.exists():
+            return cand2
+
+        # Last resort: if the path was written as "data/processed/..." and we are already in that folder,
+        # avoid doubling "data/processed".
+        if str(p).replace("\\", "/").startswith("data/processed/"):
+            trimmed = str(p).replace("\\", "/").split("data/processed/", 1)[1]
+            cand3 = (Path.cwd() / "data" / "processed" / trimmed).resolve()
+            return cand3
+
+        return cand2
+
+    def _verify_manifest_and_paths(self, manifest_path: str, track: str) -> Dict[str, Any]:
+        mp = Path(manifest_path)
+        if not mp.exists():
+            raise FileNotFoundError(f"dataset_manifest.json not found: {mp}")
+
+        manifest = json.loads(mp.read_text(encoding="utf-8"))
+        if "tracks" not in manifest or track not in manifest["tracks"]:
+            raise ValueError(f"Track '{track}' not found in manifest['tracks'].")
+
+        t = manifest["tracks"][track]
+        paths = t["paths"]
+
+        required = ["train_scaled", "val_scaled", "test_scaled", "scaler"]
+        missing = [k for k in required if k not in paths]
+        if missing:
+            raise ValueError(f"Manifest missing required paths for track '{track}': {missing}")
+
+        resolved_paths = {k: str(self._resolve_path(mp, paths[k])) for k in required}
+
+        for k, p_str in resolved_paths.items():
+            p = Path(p_str)
+            if not p.exists():
+                raise FileNotFoundError(f"Missing artifact for '{track}': {k} -> {p}")
+
+        # Lightweight parquet sanity check (must be readable, columns exist)
+        df_head = pd.read_parquet(resolved_paths["train_scaled"]).head(5)
+
+        cols = t.get("columns", {})
+        for must in ["hist_cols", "future_cols", "target_cols"]:
+            if must not in cols or not cols[must]:
+                raise ValueError(f"Manifest columns missing '{must}' for track '{track}'.")
+
+        # Return full paths for downstream agents so everything is unambiguous.
+        full_paths = dict(paths)
+        for k, v in resolved_paths.items():
+            full_paths[k] = v
+
+        return {
+            "manifest_path": str(mp.resolve()),
+            "track": track,
+            "paths": full_paths,
+            "columns": cols,
+            "train_head_columns": list(df_head.columns),
+        }
+
+    def tick(self) -> None:
+        for msg in self.poll(max_messages=20):
+            if msg.kind != "command":
+                continue
+            if msg.payload.get("command") != "prepare":
+                continue
+
+            corr_id = msg.correlation_id
+            run_cfg = msg.payload.get("run_config", {}) or {}
+
+            try:
+                info = self._verify_manifest_and_paths(
+                    manifest_path=msg.payload["manifest_path"],
+                    track=msg.payload["track"],
+                )
+                self.publish(
+                    topic_type="prepare",
+                    kind="event",
+                    payload={
+                        "event": "ready",
+                        "track": info["track"],
+                        "manifest_path": info["manifest_path"],
+                        "paths": info["paths"],
+                        "columns": info["columns"],
+                        "run_config": run_cfg,
+                    },
+                    correlation_id=corr_id,
+                )
+            except Exception as e:
+                self.publish(
+                    topic_type="prepare",
+                    kind="error",
+                    payload={"event": "not_ready", "error": str(e)},
+                    correlation_id=corr_id,
+                    level="error",
+                )
