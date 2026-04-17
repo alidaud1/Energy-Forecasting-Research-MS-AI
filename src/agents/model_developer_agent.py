@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import joblib
 import numpy as np
@@ -42,6 +42,7 @@ from .base_agent import BaseAgent
 class TrainOutcome:
     model_path: str
     plot_path: str
+    predictions_path: str
     metrics: Dict[str, float]
     n_train_windows: int
     n_test_windows: int
@@ -114,6 +115,11 @@ class TransformerInputDataset(Dataset):
     def __len__(self) -> int:
         return len(self._idxs)
 
+    @property
+    def base_indices(self) -> List[int]:
+        # Maps dataset index -> base SlidingWindowDataset index.
+        return list(self._idxs)
+
     def _make_hour_idx(self, base_idx: int, L: int) -> torch.Tensor:
         _zone, _hs, he, _fs, _fe = self.ds.window_time_bounds(base_idx)
         hist_start = he - pd.Timedelta(hours=self.W - 1)
@@ -181,6 +187,7 @@ class ModelDeveloperAgent(BaseAgent):
         require_finite_targets: bool = True,
         progress_label: str = "",
         correlation_id: str | None = None,
+        return_base_indices: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray]:
         ds = SlidingWindowDataset(
             df=df,
@@ -194,8 +201,9 @@ class ModelDeveloperAgent(BaseAgent):
         n = len(ds)
         take = min(n, max_windows) if max_windows > 0 else n
 
-        X_list = []
-        Y_list = []
+        X_list: List[np.ndarray] = []
+        Y_list: List[np.ndarray] = []
+        kept_base_idxs: List[int] = []
         skipped = 0
 
         for i in range(take):
@@ -214,6 +222,7 @@ class ModelDeveloperAgent(BaseAgent):
 
             X_list.append(x_vec)
             Y_list.append(y_vec)
+            kept_base_idxs.append(i)
 
             if correlation_id and (i + 1) % 500 == 0:
                 self.publish(
@@ -235,6 +244,8 @@ class ModelDeveloperAgent(BaseAgent):
 
         X = np.stack(X_list, axis=0).astype(np.float32)
         Y = np.stack(Y_list, axis=0).astype(np.float32)
+        if return_base_indices:
+            return X, Y, kept_base_idxs  # type: ignore[return-value]
         return X, Y
 
     def _make_model(self, model_type: str, hyperparams: dict):
@@ -346,7 +357,8 @@ class ModelDeveloperAgent(BaseAgent):
             progress_label="train",
             correlation_id=corr_id,
         )
-        X_test, y_test = self._build_xy_from_windows(
+        # Also keep base window indices so we can reconstruct forecast timestamps in predictions parquet.
+        X_test, y_test, test_base_idxs = self._build_xy_from_windows(
             df_test,
             hist_cols=cols["hist_cols"],
             future_cols=cols["future_cols"],
@@ -358,6 +370,7 @@ class ModelDeveloperAgent(BaseAgent):
             require_finite_targets=True,
             progress_label="test",
             correlation_id=corr_id,
+            return_base_indices=True,
         )
 
         model = self._make_model(model_type, hyperparams)
@@ -386,9 +399,39 @@ class ModelDeveloperAgent(BaseAgent):
         plot_path = self.run_dir / "plots" / f"{track}_{model_type}_pred_vs_actual.png"
         metrics = self._evaluate_and_plot(y_true=y_test_inv, y_pred=y_pred_inv, plot_path=plot_path)
 
+        # Write baseline predictions parquet for Phase C3 integration/plots.
+        dy = len(cols.get("target_cols") or ["y"])
+        if dy != 1:
+            raise ValueError("baseline predictions parquet currently supports single-target only")
+        if y_test_inv.shape[1] != H * dy:
+            raise ValueError("unexpected baseline y_test shape for parquet export")
+        y_true_3d = y_test_inv.reshape(-1, H, dy)
+        y_pred_3d = y_pred_inv.reshape(-1, H, dy)
+        ds_test_base = SlidingWindowDataset(
+            df=df_test,
+            hist_cols=cols["hist_cols"],
+            future_cols=cols["future_cols"],
+            target_cols=cols["target_cols"],
+            cfg=WindowConfig(W=W, H=H, stride=stride),
+            return_times=False,
+        )
+        pred_path = self.run_dir / "predictions" / f"{track}_{model_type}_baseline_predictions.parquet"
+        pred_path_str = self._save_predictions_parquet(
+            ds_test_base,
+            y_true_3d,
+            y_pred_3d,
+            pred_path,
+            track=track,
+            model_family="baseline",
+            model_name=model_type,
+            strategy="baseline",
+            base_indices=test_base_idxs,
+        )
+
         return TrainOutcome(
             model_path=model_path.as_posix(),
             plot_path=plot_path.as_posix(),
+            predictions_path=pred_path_str,
             metrics=metrics,
             n_train_windows=int(len(X_train)),
             n_test_windows=int(len(X_test)),
@@ -415,8 +458,10 @@ class ModelDeveloperAgent(BaseAgent):
         out_path: Path,
         *,
         track: str,
+        model_family: str,
         model_name: str,
-        strategy: str,
+        strategy: str = "",
+        base_indices: Optional[List[int]] = None,
     ) -> str:
         rows = []
         N, H, Dy = y_true.shape
@@ -424,17 +469,22 @@ class ModelDeveloperAgent(BaseAgent):
             raise ValueError("predictions parquet writer currently supports single-target only")
 
         for i in range(N):
-            zone, _hs, _he, fs, _fe = base_ds.window_time_bounds(i)
+            base_i = base_indices[i] if base_indices is not None else i
+            zone, _hs, _he, fs, _fe = base_ds.window_time_bounds(base_i)
             times = pd.date_range(fs, periods=H, freq="h")
             for h in range(H):
                 rows.append(
                     {
+                        "run_id": self.run_id,
+                        "track": track,
+                        "model_family": model_family,
+                        "model_name": model_name,
                         "ZONEID": int(zone),
                         "timestamp": times[h],
                         "horizon": int(h + 1),
                         "y_true": float(y_true[i, h, 0]),
                         "y_pred": float(y_pred[i, h, 0]),
-                        "track": track,
+                        # Backward/diagnostic fields (safe to keep)
                         "model": model_name,
                         "strategy": strategy,
                     }
@@ -622,11 +672,20 @@ class ModelDeveloperAgent(BaseAgent):
 
         pred_path = self.run_dir / "predictions" / f"{track}_{exec_cfg.model_name}_{exec_cfg.strategy}_predictions.parquet"
         pred_path_str = self._save_predictions_parquet(
-            ds_test_base, y_true_inv, y_pred_inv, pred_path, track=track, model_name=exec_cfg.model_name, strategy=exec_cfg.strategy
+            ds_test_base,
+            y_true_inv,
+            y_pred_inv,
+            pred_path,
+            track=track,
+            model_family="transformer",
+            model_name=exec_cfg.model_name,
+            strategy=exec_cfg.strategy,
+            base_indices=ds_test.base_indices,
         )
 
         return {
             "track": track,
+            "model_family": "transformer",
             "model_name": exec_cfg.model_name,
             "strategy": exec_cfg.strategy,
             "metrics": metrics,
@@ -690,8 +749,10 @@ class ModelDeveloperAgent(BaseAgent):
                             "event": "evaluation_complete",
                             "track": msg.payload.get("track"),
                             "model_type": msg.payload.get("model_type"),
+                            "model_name": msg.payload.get("model_type"),
+                            "model_family": "baseline",
                             "metrics": outcome.metrics,
-                            "artifacts": {"model_path": outcome.model_path, "plot_path": outcome.plot_path},
+                            "artifacts": {"model_path": outcome.model_path, "plot_path": outcome.plot_path, "predictions_path": outcome.predictions_path},
                             "n_train_windows": outcome.n_train_windows,
                             "n_test_windows": outcome.n_test_windows,
                         },

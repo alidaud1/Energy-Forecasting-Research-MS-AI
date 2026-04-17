@@ -47,6 +47,7 @@ def parse_args():
     p.add_argument("--patience", type=int, default=10)
     p.add_argument("--load_model", type=str, choices=["patchtst", "itransformer"], default="patchtst")
     p.add_argument("--solar_model", type=str, choices=["patchtst", "itransformer"], default="patchtst")
+    p.add_argument("--with_baselines", action="store_true", help="In research mode, also run XGBoost baselines for both tracks.")
 
     p.add_argument("--tick_seconds", type=float, default=1.0)
     p.add_argument("--timeout_seconds", type=float, default=600.0)
@@ -220,6 +221,46 @@ def main():
                 )
                 corr_id = f"{run_id}_train"
 
+                # Optional: run baselines in the same run_id (so integration can compare error distributions).
+                if args.with_baselines:
+                    xgb_hp = {
+                        "n_estimators": 300,
+                        "max_depth": 6,
+                        "learning_rate": 0.05,
+                        "subsample": 0.8,
+                        "colsample_bytree": 0.8,
+                        "reg_lambda": 1.0,
+                        "random_state": args.seed,
+                        "tree_method": "hist",
+                    }
+                    base_training = {
+                        "max_train_windows": args.max_train_windows,
+                        "max_test_windows": args.max_test_windows,
+                        "seed": args.seed,
+                    }
+                    for trk, ready_msg in (("load", load_ready_msg), ("solar", solar_ready_msg)):
+                        pool.publish(
+                            Message.new(
+                                topic=TopicId("train", run_id),
+                                kind="command",
+                                sender="Orchestrator",
+                                sender_role="system",
+                                to_roles=["model_developer"],
+                                payload={
+                                    "command": "train",
+                                    "track": trk,
+                                    "paths": ready_msg.payload["paths"],
+                                    "columns": ready_msg.payload["columns"],
+                                    "model_type": "xgboost",
+                                    "hyperparams": dict(xgb_hp),
+                                    "window": common_window,
+                                    "training": base_training,
+                                },
+                                correlation_id=f"{corr_id}_baseline_{trk}",
+                                run_id=run_id,
+                            )
+                        )
+
                 pool.publish(
                     Message.new(
                         topic=TopicId("train", run_id),
@@ -274,7 +315,10 @@ def main():
 
         if args.mode == "research":
             integ_msgs = pool.find_by_topic("integrate", topic_source=run_id)
-            if any(m.kind == "result" and m.payload.get("event") == "joint_report_ready" for m in integ_msgs):
+            if any(
+                m.kind == "result" and m.payload.get("event") in ("joint_report_ready", "final_research_summary_ready")
+                for m in integ_msgs
+            ):
                 done = True
 
         time.sleep(args.tick_seconds)
