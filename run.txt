@@ -3,5 +3,11 @@ python orchestrator.py --track load --model xgboost --print_messages
 python orchestrator.py --track laod --model linear --max_train_windows 2000 --max_test_windows 500 --print_messages
 
 PHASE-C
-python scripts/phase_c_precheck.py --manifest data/processed/dataset_manifest.json
+
 pytest -q
+
+1) Optional but recommended: validate Phase A2 artifacts first
+  python scripts/phase_c_precheck.py --manifest data/processed/dataset_manifest.json
+
+2) Research mode (transformers): trains load + solar in parallel and writes joint report
+  python orchestrator.py --mode research --print_messages --timeout_seconds 7200 --epochs 5 --batch_size 128 --lr 0.001 --patience 2
