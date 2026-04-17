@@ -100,3 +100,24 @@ Artifacts written:
 - `data/processed/solar/` (same set)
 - `data/processed/scalers/*.joblib`
 - `data/processed/dataset_manifest.json`
+
+## Phase B (Agentic Baselines) - B2
+
+Phase B2 adds a runnable multi-agent baseline loop (prepare -> train -> evaluate) driven by the MessagePool.
+
+Install Phase B extras:
+
+```bash
+pip install -r requirements_phase_b.txt
+```
+
+Run:
+
+```bash
+python orchestrator.py --track load --model xgboost
+```
+
+Outputs:
+- `logs/message_pool.jsonl`
+- `logs/runs/<run_id>/models/*.joblib`
+- `logs/runs/<run_id>/plots/*.png`
