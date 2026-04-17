@@ -1,4 +1,7 @@
+PHASE-B
 python orchestrator.py --track load --model xgboost --print_messages
-
 python orchestrator.py --track laod --model linear --max_train_windows 2000 --max_test_windows 500 --print_messages
 
+PHASE-C
+python scripts/phase_c_precheck.py --manifest data/processed/dataset_manifest.json
+pytest -q
