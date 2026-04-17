@@ -1,1 +1,4 @@
 python orchestrator.py --track load --model xgboost --print_messages
+
+python orchestrator.py --track laod --model linear --max_train_windows 2000 --max_test_windows 500 --print_messages
+
