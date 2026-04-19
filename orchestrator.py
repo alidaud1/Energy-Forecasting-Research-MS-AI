@@ -6,6 +6,7 @@ import queue
 import threading
 import time
 import sys
+from pathlib import Path
 
 from src.agents.base_agent import AgentConfig
 from src.agents.message_pool import MessagePool
@@ -19,6 +20,8 @@ from src.agents.forecast_integration_agent import ForecastIntegrationAgent
 from src.agents.messages import Message, TopicId
 from src.phase_c_precheck import run_phase_c_precheck
 from src.agents.interactive_task_manager_agent import InteractiveResearchConfig, InteractiveTaskManagerAgent
+from scripts.interaction_audit import build_markdown as build_interaction_audit_markdown  # type: ignore
+from scripts.interaction_audit import _load_jsonl as _load_audit_jsonl  # type: ignore
 
 
 def make_run_id() -> str:
@@ -454,6 +457,15 @@ def main():
         print(f"[OK] Run completed. run_id={run_id}", flush=True)
         print("See logs/message_pool.jsonl and logs/runs/<run_id>/ for artifacts.", flush=True)
     else:
+        # Phase D4: always emit a standalone thesis-style audit markdown as a final packaging step.
+        try:
+            msgs = _load_audit_jsonl(Path("logs") / "message_pool.jsonl")
+            md = build_interaction_audit_markdown(msgs, run_id=run_id)
+            out = Path("logs") / "runs" / run_id / "reports" / "interaction_audit_standalone.md"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(md, encoding="utf-8")
+        except Exception:
+            pass
         print(f"[OK] Research run completed. run_id={run_id}", flush=True)
         print(f"Check logs/runs/{run_id}/reports/joint_decision_report.md", flush=True)
         print("Message trace: logs/message_pool.jsonl", flush=True)

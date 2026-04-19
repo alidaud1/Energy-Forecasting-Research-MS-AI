@@ -49,8 +49,11 @@ class ForecastIntegrationAgent(BaseAgent):
 
     def __init__(self, cfg, pool, icfg: Optional[IntegrationConfig] = None):
         super().__init__(cfg, pool)
-        # Phase D3: also listen to system_directive + directive_ack for comparative audit traces.
-        self.subscribe(topics=["evaluate", "system", "prepare", "directive", "system_directive", "directive_ack", "human_gate_decision"], start_from="latest")
+        # Phase D3/D4: listen to system_directive + directive_ack/rejected for comparative audit traces.
+        self.subscribe(
+            topics=["evaluate", "system", "prepare", "directive", "system_directive", "directive_ack", "directive_rejected", "human_gate_decision"],
+            start_from="latest",
+        )
 
         self.icfg = icfg or IntegrationConfig()
 
@@ -565,6 +568,7 @@ class ForecastIntegrationAgent(BaseAgent):
         directives = by_topic(f"directive/{self.run_id}")
         sys_directives = by_topic(f"system_directive/{self.run_id}")
         acks = by_topic(f"directive_ack/{self.run_id}")
+        rejected = by_topic(f"directive_rejected/{self.run_id}")
         gate_decisions = by_topic(f"human_gate_decision/{self.run_id}")
         evals = [r for r in by_topic(f"evaluate/{self.run_id}") if (r.get("payload") or {}).get("event") == "evaluation_complete"]
 
@@ -613,6 +617,14 @@ class ForecastIntegrationAgent(BaseAgent):
             for a in acks:
                 p = a.get("payload") or {}
                 lines.append(f"- stage=`{p.get('stage')}` directive_id=`{p.get('directive_id')}` applied=`{p.get('applied_overrides')}`\n")
+
+        lines.append("\n## Directive Rejections (Phase D4)\n")
+        if not rejected:
+            lines.append("- No directive_rejected messages found.\n")
+        else:
+            for r in rejected:
+                p = r.get("payload") or {}
+                lines.append(f"- stage=`{p.get('stage')}` directive_id=`{p.get('directive_id')}` rejected=`{p.get('rejected_overrides')}`\n")
 
         lines.append("\n## Human Gate Decisions (Phase D3)\n")
         if not gate_decisions:
@@ -798,6 +810,41 @@ class ForecastIntegrationAgent(BaseAgent):
             lines.append(f"- Proposed: model=`{p0.get('model_name')}` family=`{p0.get('model_family')}` MAE={m0.get('mae')} RMSE={m0.get('rmse')}\n")
             lines.append(f"- Human-adjusted: model=`{p1.get('model_name')}` family=`{p1.get('model_family')}` MAE={m1.get('mae')} RMSE={m1.get('rmse')}\n")
             lines.append(f"- Improvement: MAE={mae_imp:.2f}% RMSE={rmse_imp:.2f}%\n\n")
+
+        # Net-load comparison if both branches have overlapping timestamps.
+        try:
+            lp0 = best_for("load", "proposed")
+            sp0 = best_for("solar", "proposed")
+            lp1 = best_for("load", "human_adjusted")
+            sp1 = best_for("solar", "human_adjusted")
+            if lp0 and sp0 and lp1 and sp1:
+                lines.append("## Net-load (if overlap exists)\n")
+                info0 = {"computed": False, "reason": "missing"}
+                info1 = {"computed": False, "reason": "missing"}
+                if lp0.get("artifacts", {}).get("predictions_path") and sp0.get("artifacts", {}).get("predictions_path"):
+                    dfL = self._read_preds(lp0["artifacts"]["predictions_path"])
+                    dfS = self._read_preds(sp0["artifacts"]["predictions_path"])
+                    info0 = self._compute_net_load(dfL, dfS)
+                if lp1.get("artifacts", {}).get("predictions_path") and sp1.get("artifacts", {}).get("predictions_path"):
+                    dfL = self._read_preds(lp1["artifacts"]["predictions_path"])
+                    dfS = self._read_preds(sp1["artifacts"]["predictions_path"])
+                    info1 = self._compute_net_load(dfL, dfS)
+                if info0.get("computed") and info1.get("computed"):
+                    m0 = info0.get("metrics", {}) or {}
+                    m1 = info1.get("metrics", {}) or {}
+                    mae0 = float(m0.get("mae", float("nan")))
+                    mae1 = float(m1.get("mae", float("nan")))
+                    rmse0 = float(m0.get("rmse", float("nan")))
+                    rmse1 = float(m1.get("rmse", float("nan")))
+                    mae_imp = ((mae0 - mae1) / mae0 * 100.0) if mae0 and mae0 == mae0 else float("nan")
+                    rmse_imp = ((rmse0 - rmse1) / rmse0 * 100.0) if rmse0 and rmse0 == rmse0 else float("nan")
+                    lines.append(f"- Proposed: MAE={m0.get('mae')} RMSE={m0.get('rmse')}\n")
+                    lines.append(f"- Human-adjusted: MAE={m1.get('mae')} RMSE={m1.get('rmse')}\n")
+                    lines.append(f"- Improvement: MAE={mae_imp:.2f}% RMSE={rmse_imp:.2f}%\n\n")
+                else:
+                    lines.append(f"- Not computed for both branches: proposed_reason=`{info0.get('reason')}`, adjusted_reason=`{info1.get('reason')}`\n\n")
+        except Exception:
+            pass
 
         out_path.write_text("".join(lines), encoding="utf-8")
         return out_path.as_posix()

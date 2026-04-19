@@ -36,40 +36,57 @@ class SolarForecastingAgent(BaseAgent):
         self._applied_directives: set[str] = set()
         self._training_overrides: dict = {}
 
-    def _apply_overrides(self, overrides: dict) -> None:
+    def _apply_overrides(self, overrides: dict) -> tuple[dict, dict]:
         # Keep it intentionally small/safe: only allow overrides that map to existing training/window knobs.
+        applied: dict = {}
+        rejected: dict = {}
         for k, v in (overrides or {}).items():
             ks = str(k)
             if ks in ("optimizer.lr", "plan.lr"):
                 try:
-                    self._training_overrides["lr"] = float(v)
+                    val = float(v)
+                    self._training_overrides["lr"] = val
+                    applied[ks] = val
                 except Exception:
-                    pass
+                    rejected[ks] = v
             elif ks in ("trainer.max_epochs", "plan.epochs"):
                 try:
-                    self._training_overrides["epochs"] = int(v)
+                    val = int(v)
+                    self._training_overrides["epochs"] = val
+                    applied[ks] = val
                 except Exception:
-                    pass
+                    rejected[ks] = v
             elif ks == "plan.batch_size":
                 try:
-                    self._training_overrides["batch_size"] = int(v)
+                    val = int(v)
+                    self._training_overrides["batch_size"] = val
+                    applied[ks] = val
                 except Exception:
-                    pass
+                    rejected[ks] = v
             elif ks in ("window.W", "plan.W"):
                 try:
-                    self._training_overrides["W"] = int(v)
+                    val = int(v)
+                    self._training_overrides["W"] = val
+                    applied[ks] = val
                 except Exception:
-                    pass
+                    rejected[ks] = v
             elif ks in ("window.H", "plan.H"):
                 try:
-                    self._training_overrides["H"] = int(v)
+                    val = int(v)
+                    self._training_overrides["H"] = val
+                    applied[ks] = val
                 except Exception:
-                    pass
+                    rejected[ks] = v
             elif ks in ("window.stride", "plan.stride"):
                 try:
-                    self._training_overrides["stride"] = int(v)
+                    val = int(v)
+                    self._training_overrides["stride"] = val
+                    applied[ks] = val
                 except Exception:
-                    pass
+                    rejected[ks] = v
+            else:
+                rejected[ks] = v
+        return applied, rejected
 
     def _select_predictors(self, columns: dict, selected_predictors: Optional[List[str]]) -> dict:
         if not selected_predictors:
@@ -110,7 +127,7 @@ class SolarForecastingAgent(BaseAgent):
                     continue
                 overrides = payload.get("overrides") or {}
                 before = dict(self._training_overrides)
-                self._apply_overrides(overrides if isinstance(overrides, dict) else {})
+                applied, rejected = self._apply_overrides(overrides if isinstance(overrides, dict) else {})
                 after = dict(self._training_overrides)
                 self._applied_directives.add(msg.msg_id)
                 if before != after:
@@ -122,8 +139,22 @@ class SolarForecastingAgent(BaseAgent):
                             "stage": "training",
                             "directive_id": msg.msg_id,
                             "applied_overrides": after,
+                            "applied_keys": sorted(applied.keys()),
                         },
                         correlation_id=msg.correlation_id,
+                    )
+                elif rejected:
+                    self.publish(
+                        topic_type="directive_rejected",
+                        kind="event",
+                        payload={
+                            "event": "directive_rejected",
+                            "stage": "training",
+                            "directive_id": msg.msg_id,
+                            "rejected_overrides": rejected,
+                        },
+                        correlation_id=msg.correlation_id,
+                        level="warning",
                     )
                 continue
 
