@@ -34,3 +34,9 @@ tqdm>=4.66,<5.0
 
 # Optional (Phase D2 interactive UI)
 prompt_toolkit>=3.0,<4.0
+
+# Phase E1 workbench (API + UI)
+fastapi>=0.110,<1.0
+uvicorn>=0.25,<1.0
+requests>=2.31,<3.0
+streamlit>=1.33,<2.0
