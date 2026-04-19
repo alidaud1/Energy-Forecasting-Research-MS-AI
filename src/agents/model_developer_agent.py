@@ -167,11 +167,22 @@ class ModelDeveloperAgent(BaseAgent):
         (self.run_dir / "plots").mkdir(parents=True, exist_ok=True)
         (self.run_dir / "reports").mkdir(parents=True, exist_ok=True)
         (self.run_dir / "predictions").mkdir(parents=True, exist_ok=True)
+        (self.run_dir / "child_runs").mkdir(parents=True, exist_ok=True)
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def _load_df(self, path: str) -> pd.DataFrame:
         return pd.read_parquet(path)
+
+    def _out_dir(self, child_run_id: Optional[str]) -> Path:
+        if not child_run_id:
+            return self.run_dir
+        out = self.run_dir / "child_runs" / child_run_id
+        (out / "models").mkdir(parents=True, exist_ok=True)
+        (out / "plots").mkdir(parents=True, exist_ok=True)
+        (out / "reports").mkdir(parents=True, exist_ok=True)
+        (out / "predictions").mkdir(parents=True, exist_ok=True)
+        return out
 
     def _build_xy_from_windows(
         self,
@@ -317,6 +328,11 @@ class ModelDeveloperAgent(BaseAgent):
         cols = payload["columns"]
         model_type = payload["model_type"]
         hyperparams = payload["hyperparams"]
+        child_run_id = str(payload.get("child_run_id") or "")
+        parent_run_id = str(payload.get("parent_run_id") or "")
+        comparison_group_id = str(payload.get("comparison_group_id") or "")
+        variant = str(payload.get("variant") or "proposed")
+        out_dir = self._out_dir(child_run_id or None)
 
         W = int(payload["window"]["W"])
         H = int(payload["window"]["H"])
@@ -393,10 +409,10 @@ class ModelDeveloperAgent(BaseAgent):
         y_test_inv = self._inverse_targets_if_possible(scaler_obj, y_test)
         y_pred_inv = self._inverse_targets_if_possible(scaler_obj, y_pred)
 
-        model_path = self.run_dir / "models" / f"{track}_{model_type}.joblib"
+        model_path = out_dir / "models" / f"{track}_{model_type}.joblib"
         joblib.dump(model, model_path)
 
-        plot_path = self.run_dir / "plots" / f"{track}_{model_type}_pred_vs_actual.png"
+        plot_path = out_dir / "plots" / f"{track}_{model_type}_pred_vs_actual.png"
         metrics = self._evaluate_and_plot(y_true=y_test_inv, y_pred=y_pred_inv, plot_path=plot_path)
 
         # Write baseline predictions parquet for Phase C3 integration/plots.
@@ -415,7 +431,7 @@ class ModelDeveloperAgent(BaseAgent):
             cfg=WindowConfig(W=W, H=H, stride=stride),
             return_times=False,
         )
-        pred_path = self.run_dir / "predictions" / f"{track}_{model_type}_baseline_predictions.parquet"
+        pred_path = out_dir / "predictions" / f"{track}_{model_type}_baseline_predictions.parquet"
         pred_path_str = self._save_predictions_parquet(
             ds_test_base,
             y_true_3d,
@@ -426,6 +442,10 @@ class ModelDeveloperAgent(BaseAgent):
             model_name=model_type,
             strategy="baseline",
             base_indices=test_base_idxs,
+            run_id_override=child_run_id or None,
+            parent_run_id=parent_run_id or None,
+            variant=variant,
+            comparison_group_id=comparison_group_id,
         )
 
         return TrainOutcome(
@@ -462,6 +482,10 @@ class ModelDeveloperAgent(BaseAgent):
         model_name: str,
         strategy: str = "",
         base_indices: Optional[List[int]] = None,
+        run_id_override: Optional[str] = None,
+        parent_run_id: Optional[str] = None,
+        variant: str = "raw",
+        comparison_group_id: str = "",
     ) -> str:
         rows = []
         N, H, Dy = y_true.shape
@@ -475,7 +499,10 @@ class ModelDeveloperAgent(BaseAgent):
             for h in range(H):
                 rows.append(
                     {
-                        "run_id": self.run_id,
+                        "run_id": run_id_override or self.run_id,
+                        "parent_run_id": parent_run_id or "",
+                        "variant": variant,
+                        "comparison_group_id": comparison_group_id or "",
                         "track": track,
                         "model_family": model_family,
                         "model_name": model_name,
@@ -535,6 +562,11 @@ class ModelDeveloperAgent(BaseAgent):
         cols = payload["columns"]
         window = payload["window"]
         training = payload.get("training", {}) or {}
+        child_run_id = str(payload.get("child_run_id") or "")
+        parent_run_id = str(payload.get("parent_run_id") or "")
+        comparison_group_id = str(payload.get("comparison_group_id") or "")
+        variant = str(payload.get("variant") or "proposed")
+        out_dir = self._out_dir(child_run_id or None)
         exec_cfg_dict = payload["exec_cfg"]
         exec_cfg = TransformerExecutionConfig(
             model_name=str(exec_cfg_dict["model_name"]),
@@ -659,10 +691,10 @@ class ModelDeveloperAgent(BaseAgent):
         y_pred_inv = self._inverse_targets_3d(scaler_obj, y_pred)
         y_true_inv = self._inverse_targets_3d(scaler_obj, y_true)
 
-        model_path = self.run_dir / "models" / f"{track}_{exec_cfg.model_name}_{exec_cfg.strategy}.pt"
+        model_path = out_dir / "models" / f"{track}_{exec_cfg.model_name}_{exec_cfg.strategy}.pt"
         torch.save({"state_dict": model.state_dict()}, model_path)
 
-        plot_path = self.run_dir / "plots" / f"{track}_{exec_cfg.model_name}_{exec_cfg.strategy}_pred_vs_actual.png"
+        plot_path = out_dir / "plots" / f"{track}_{exec_cfg.model_name}_{exec_cfg.strategy}_pred_vs_actual.png"
         metrics = self._metrics_and_plot_3d(
             y_true=y_true_inv,
             y_pred=y_pred_inv,
@@ -670,7 +702,7 @@ class ModelDeveloperAgent(BaseAgent):
             title=f"{track.upper()} | {exec_cfg.model_name} | Strategy {exec_cfg.strategy}",
         )
 
-        pred_path = self.run_dir / "predictions" / f"{track}_{exec_cfg.model_name}_{exec_cfg.strategy}_predictions.parquet"
+        pred_path = out_dir / "predictions" / f"{track}_{exec_cfg.model_name}_{exec_cfg.strategy}_predictions.parquet"
         pred_path_str = self._save_predictions_parquet(
             ds_test_base,
             y_true_inv,
@@ -681,6 +713,10 @@ class ModelDeveloperAgent(BaseAgent):
             model_name=exec_cfg.model_name,
             strategy=exec_cfg.strategy,
             base_indices=ds_test.base_indices,
+            run_id_override=child_run_id or None,
+            parent_run_id=parent_run_id or None,
+            variant=variant,
+            comparison_group_id=comparison_group_id,
         )
 
         return {
@@ -692,6 +728,10 @@ class ModelDeveloperAgent(BaseAgent):
             "train_stats": train_stats,
             "artifacts": {"model_path": model_path.as_posix(), "plot_path": plot_path.as_posix(), "predictions_path": pred_path_str},
             "device": str(self.device),
+            "child_run_id": child_run_id,
+            "parent_run_id": parent_run_id,
+            "comparison_group_id": comparison_group_id,
+            "variant": variant,
         }
 
     def _metrics_and_plot_3d(
@@ -751,6 +791,10 @@ class ModelDeveloperAgent(BaseAgent):
                             "model_type": msg.payload.get("model_type"),
                             "model_name": msg.payload.get("model_type"),
                             "model_family": "baseline",
+                            "child_run_id": msg.payload.get("child_run_id", ""),
+                            "parent_run_id": msg.payload.get("parent_run_id", ""),
+                            "comparison_group_id": msg.payload.get("comparison_group_id", ""),
+                            "variant": msg.payload.get("variant", ""),
                             "metrics": outcome.metrics,
                             "artifacts": {"model_path": outcome.model_path, "plot_path": outcome.plot_path, "predictions_path": outcome.predictions_path},
                             "n_train_windows": outcome.n_train_windows,

@@ -15,3 +15,20 @@ pytest -q
 
 PHASE-C3
 python orchestrator.py --mode research --with_baselines --print_messages --timeout_seconds 7200
+
+
+PHASE-D1
+  How to run D1 interactive now:
+
+python orchestrator.py --mode research --interactive --with_baselines --timeout_seconds 7200
+
+When it prompts, you can type:
+
+- approve / reject
+- set epochs=5 batch_size=128 lr=0.001 patience=2
+- set load_model=itransformer solar_model=patchtst
+- enable baselines / disable baselines
+- run load only / run solar only / run both
+
+
+
