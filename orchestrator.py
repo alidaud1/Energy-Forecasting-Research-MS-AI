@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime
+import queue
+import threading
 import time
 import sys
 
@@ -16,6 +18,7 @@ from src.agents.solar_forecasting_agent import SolarForecastingAgent
 from src.agents.forecast_integration_agent import ForecastIntegrationAgent
 from src.agents.messages import Message, TopicId
 from src.phase_c_precheck import run_phase_c_precheck
+from src.agents.interactive_task_manager_agent import InteractiveResearchConfig, InteractiveTaskManagerAgent
 
 
 def make_run_id() -> str:
@@ -48,6 +51,7 @@ def parse_args():
     p.add_argument("--load_model", type=str, choices=["patchtst", "itransformer"], default="patchtst")
     p.add_argument("--solar_model", type=str, choices=["patchtst", "itransformer"], default="patchtst")
     p.add_argument("--with_baselines", action="store_true", help="In research mode, also run XGBoost baselines for both tracks.")
+    p.add_argument("--interactive", action="store_true", help="Enable Phase D1 human-in-the-loop gates (research mode).")
 
     p.add_argument("--tick_seconds", type=float, default=1.0)
     p.add_argument("--timeout_seconds", type=float, default=600.0)
@@ -122,39 +126,72 @@ def main():
                 raise SystemExit(2)
 
         common_window = {"W": args.W, "H": args.H, "stride": args.stride}
-        common_training = {"epochs": args.epochs, "batch_size": args.batch_size, "lr": args.lr, "patience": args.patience}
+        # Phase D2: propagate window caps to transformers too (helps keep research runs bounded on slow hardware).
+        common_training = {
+            "epochs": args.epochs,
+            "batch_size": args.batch_size,
+            "lr": args.lr,
+            "patience": args.patience,
+            "max_train_windows": int(args.max_train_windows),
+            "max_val_windows": int(args.max_test_windows),
+            "max_test_windows": int(args.max_test_windows),
+        }
 
-        tm_load = TaskManagerAgent(
-            AgentConfig(agent_id="TaskManagerLoad", role="task_manager", run_id=run_id),
-            pool,
-            RunConfig(
-                manifest_path=args.manifest,
-                track="load",
-                model_type="transformer",
-                window=common_window,
-                training=common_training,
-                hpo={"enabled": False, "n_trials": 1},
-            ),
-        )
-        tm_solar = TaskManagerAgent(
-            AgentConfig(agent_id="TaskManagerSolar", role="task_manager", run_id=run_id),
-            pool,
-            RunConfig(
-                manifest_path=args.manifest,
-                track="solar",
-                model_type="transformer",
-                window=common_window,
-                training=common_training,
-                hpo={"enabled": False, "n_trials": 1},
-            ),
-        )
+        interactive_tm = None
+        if args.interactive:
+            interactive_tm = InteractiveTaskManagerAgent(
+                AgentConfig(agent_id="InteractiveTaskManagerAgent", role="task_manager", run_id=run_id),
+                pool,
+                InteractiveResearchConfig(
+                    manifest_path=args.manifest,
+                    tracks=["load", "solar"],
+                    W=args.W,
+                    H=args.H,
+                    stride=args.stride,
+                    with_baselines=bool(args.with_baselines),
+                    max_train_windows=int(args.max_train_windows),
+                    max_test_windows=int(args.max_test_windows),
+                    seed=int(args.seed),
+                    load_model=str(args.load_model),
+                    solar_model=str(args.solar_model),
+                    epochs=int(args.epochs),
+                    batch_size=int(args.batch_size),
+                    lr=float(args.lr),
+                    patience=int(args.patience),
+                ),
+            )
+        else:
+            tm_load = TaskManagerAgent(
+                AgentConfig(agent_id="TaskManagerLoad", role="task_manager", run_id=run_id),
+                pool,
+                RunConfig(
+                    manifest_path=args.manifest,
+                    track="load",
+                    model_type="transformer",
+                    window=common_window,
+                    training=common_training,
+                    hpo={"enabled": False, "n_trials": 1},
+                ),
+            )
+            tm_solar = TaskManagerAgent(
+                AgentConfig(agent_id="TaskManagerSolar", role="task_manager", run_id=run_id),
+                pool,
+                RunConfig(
+                    manifest_path=args.manifest,
+                    track="solar",
+                    model_type="transformer",
+                    window=common_window,
+                    training=common_training,
+                    hpo={"enabled": False, "n_trials": 1},
+                ),
+            )
         prep = PreparationAgent(AgentConfig(agent_id="PreparationAgent", role="preparation", run_id=run_id), pool)
         load_agent = LoadForecastingAgent(AgentConfig(agent_id="LoadForecastingAgent", role="load_forecasting", run_id=run_id), pool)
         solar_agent = SolarForecastingAgent(AgentConfig(agent_id="SolarForecastingAgent", role="solar_forecasting", run_id=run_id), pool)
         dev = ModelDeveloperAgent(AgentConfig(agent_id="ModelDeveloperAgent", role="model_developer", run_id=run_id), pool)
         integ = ForecastIntegrationAgent(AgentConfig(agent_id="ForecastIntegrationAgent", role="forecast_integration", run_id=run_id), pool)
 
-        agents = [tm_load, tm_solar, prep, load_agent, solar_agent, dev, integ]
+        agents = ([interactive_tm] if interactive_tm is not None else [tm_load, tm_solar]) + [prep, load_agent, solar_agent, dev, integ]
 
     start = time.time()
     done = False
@@ -166,10 +203,35 @@ def main():
     if args.mode == "baseline":
         print(f"[START] mode=baseline run_id={run_id} track={args.track} model={args.model}", flush=True)
     else:
-        print(f"[START] mode=research run_id={run_id} load_model={args.load_model} solar_model={args.solar_model}", flush=True)
+        if args.interactive:
+            print(f"[START] mode=research interactive run_id={run_id}", flush=True)
+        else:
+            print(f"[START] mode=research run_id={run_id} load_model={args.load_model} solar_model={args.solar_model}", flush=True)
 
     ready = {"load": False, "solar": False}
     injected_train = False
+
+    # Phase D2: non-blocking interactive input (background stdin reader).
+    input_q: "queue.Queue[str]" = queue.Queue()
+    stop_input = threading.Event()
+
+    def _stdin_reader() -> None:
+        while not stop_input.is_set():
+            try:
+                line = sys.stdin.readline()
+            except Exception:
+                break
+            if not line:
+                break
+            input_q.put(line.rstrip("\r\n"))
+
+    input_thread = None
+    if args.mode == "research" and args.interactive:
+        input_thread = threading.Thread(target=_stdin_reader, name="interactive_stdin_reader", daemon=True)
+        input_thread.start()
+
+    active_gate: dict | None = None
+    handled_gate_seq = -1
 
     while not done and (time.time() - start) < args.timeout_seconds:
         for a in agents:
@@ -203,7 +265,15 @@ def main():
             if done:
                 break
 
-        if args.mode == "research":
+        # Interactive cancellation (gate rejected)
+        if args.mode == "research" and args.interactive and not done:
+            gate_msgs = pool.find_by_topic("gate", topic_source=run_id)
+            if any(m.kind == "event" and m.payload.get("event") == "gate_rejected" for m in gate_msgs):
+                print("[FAIL] Interactive gate rejected by human.", flush=True)
+                failed = True
+                done = True
+
+        if args.mode == "research" and not args.interactive:
             prep_msgs = pool.find_by_topic("prepare", topic_source=run_id)
             for m in prep_msgs:
                 if m.kind == "event" and m.payload.get("event") == "ready":
@@ -306,6 +376,53 @@ def main():
                     )
                 )
 
+        # Phase D1 interactive gate handling (CLI side)
+        if args.mode == "research" and args.interactive:
+            gate_msgs = pool.find_by_topic("gate", topic_source=run_id)
+            # Gate manager: track the latest gate request and accept input asynchronously.
+            latest_req = None
+            for m in gate_msgs[::-1]:
+                if m.kind == "event" and m.payload.get("event") == "gate_requested":
+                    latest_req = m
+                    break
+
+            if latest_req is not None and latest_req.seq > handled_gate_seq and active_gate is None:
+                handled_gate_seq = latest_req.seq
+                active_gate = {
+                    "gate_id": latest_req.payload.get("gate_id"),
+                    "stage": latest_req.payload.get("stage"),
+                    "correlation_id": latest_req.correlation_id,
+                    "prompt": latest_req.payload.get("prompt", ""),
+                }
+                prompt = active_gate.get("prompt") or ""
+                if prompt:
+                    print("\n" + prompt, flush=True)
+                print("> ", end="", flush=True)
+
+            if active_gate is not None:
+                try:
+                    human_text = input_q.get_nowait()
+                except queue.Empty:
+                    human_text = ""
+                if human_text:
+                    pool.publish(
+                        Message.new(
+                            topic=TopicId("user_feedback", run_id),
+                            kind="event",
+                            sender="Human",
+                            sender_role="human",
+                            payload={
+                                "event": "user_feedback",
+                                "gate_id": active_gate.get("gate_id"),
+                                "stage": active_gate.get("stage"),
+                                "human_text": human_text.strip(),
+                            },
+                            correlation_id=active_gate.get("correlation_id"),
+                            run_id=run_id,
+                        )
+                    )
+                    active_gate = None
+
         eval_msgs = pool.find_by_topic("evaluate", topic_source=run_id)
         for m in eval_msgs:
             if m.kind == "result" and m.payload.get("event") == "evaluation_complete":
@@ -322,6 +439,8 @@ def main():
                 done = True
 
         time.sleep(args.tick_seconds)
+
+    stop_input.set()
 
     if not done:
         print(f"[WARN] Timeout reached without completion. run_id={run_id}", flush=True)

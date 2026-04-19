@@ -86,6 +86,23 @@ class PreparationAgent(BaseAgent):
             "train_head_columns": list(df_head.columns),
         }
 
+    def _summarize_split(self, path: str, *, target_col: str) -> Dict[str, Any]:
+        """
+        Production-friendly summary for interactive prep gating.
+        Reads only the target column to reduce IO.
+        """
+        df = pd.read_parquet(path, columns=[target_col])
+        zones = df.index.get_level_values(0).unique()
+        ts = df.index.get_level_values(1)
+        return {
+            "path": str(path),
+            "n_rows": int(df.shape[0]),
+            "n_zones": int(len(zones)),
+            "ts_min": str(pd.Timestamp(ts.min())),
+            "ts_max": str(pd.Timestamp(ts.max())),
+            "na_target": int(df[target_col].isna().sum()),
+        }
+
     def tick(self) -> None:
         for msg in self.poll(max_messages=20):
             if msg.kind != "command":
@@ -101,6 +118,14 @@ class PreparationAgent(BaseAgent):
                     manifest_path=msg.payload["manifest_path"],
                     track=msg.payload["track"],
                 )
+
+                cols = info["columns"]
+                target_col = (cols.get("target_cols") or [""])[0]
+                summary = {}
+                for split in ("train_scaled", "val_scaled", "test_scaled"):
+                    p = info["paths"].get(split)
+                    if p and target_col:
+                        summary[split] = self._summarize_split(p, target_col=target_col)
                 self.publish(
                     topic_type="prepare",
                     kind="event",
@@ -110,6 +135,7 @@ class PreparationAgent(BaseAgent):
                         "manifest_path": info["manifest_path"],
                         "paths": info["paths"],
                         "columns": info["columns"],
+                        "summary": summary,
                         "run_config": run_cfg,
                     },
                     correlation_id=corr_id,
