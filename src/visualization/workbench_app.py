@@ -27,6 +27,13 @@ def _post(url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 def _snapshot(run_id: str) -> Dict[str, Any]:
     return _get(f"{DEFAULT_API}/api/runs/{run_id}/snapshot")
 
+def _static_url(path: str) -> str:
+    # workbench_api mounts "logs/" at /static
+    p = (path or "").replace("\\", "/")
+    if p.startswith("logs/"):
+        p = p[len("logs/") :]
+    return f"{DEFAULT_API}/static/{p}"
+
 
 st.set_page_config(page_title="Unified Agent Workbench", layout="wide")
 
@@ -52,6 +59,7 @@ with st.sidebar:
     patience = st.number_input("patience", value=2, step=1)
     load_model = st.selectbox("load_model", ["patchtst", "itransformer"], index=0)
     solar_model = st.selectbox("solar_model", ["patchtst", "itransformer"], index=0)
+    use_llm = st.checkbox("use_llm (OpenAI Task Manager)", value=False)
 
     if st.button("Start Interactive Research Run", type="primary"):
         res = _post(
@@ -68,6 +76,7 @@ with st.sidebar:
                 "patience": int(patience),
                 "load_model": str(load_model),
                 "solar_model": str(solar_model),
+                "use_llm": bool(use_llm),
             },
         )
         st.session_state["run_id"] = res["run_id"]
@@ -130,6 +139,27 @@ with colB:
             if integ:
                 st.markdown("**Artifacts**")
                 st.json(integ)
+                # Render common artifacts if present.
+                rp = str(integ.get("report_path") or "")
+                if rp.endswith(".md") and rp.startswith("logs/"):
+                    try:
+                        md = requests.get(_static_url(rp), timeout=10).text
+                        st.markdown("**Report (rendered)**")
+                        st.markdown(md)
+                    except Exception:
+                        pass
+
+                # Try to show best-model plots if report includes them (read from the markdown).
+                try:
+                    if rp.endswith(".md") and rp.startswith("logs/"):
+                        md = requests.get(_static_url(rp), timeout=10).text
+                        for line in md.splitlines():
+                            if "Plot:" in line and "`logs/" in line and line.count("`") >= 2:
+                                pth = line.split("`")[1]
+                                if pth.endswith(".png") and pth.startswith("logs/"):
+                                    st.image(_static_url(pth), caption=pth, use_container_width=True)
+                except Exception:
+                    pass
             st.markdown("**Recent messages**")
             st.dataframe(snap.get("recent_messages") or [], use_container_width=True, height=520)
 
@@ -143,4 +173,3 @@ with colB:
                 render()
             else:
                 render()
-

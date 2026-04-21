@@ -17,6 +17,10 @@ from ..agents.messages import Message, TopicId
 from ..agents.interactive_task_manager_agent import InteractiveResearchConfig, InteractiveTaskManagerAgent
 from ..phase_c_precheck import run_phase_c_precheck
 
+try:  # optional
+    from dotenv import load_dotenv  # type: ignore
+except Exception:  # pragma: no cover
+    load_dotenv = None
 
 def make_run_id() -> str:
     return datetime.utcnow().strftime("run_%Y%m%d_%H%M%S")
@@ -68,11 +72,15 @@ class WorkbenchEngine:
         patience: int,
         load_model: str,
         solar_model: str,
+        use_llm: bool = False,
         timeout_seconds: float = 7200.0,
         tick_seconds: float = 1.0,
         precheck: bool = True,
     ) -> str:
         run_id = make_run_id()
+        if load_dotenv is not None:
+            # Load .env so OPENAI_API_KEY can be picked up without manual export.
+            load_dotenv(override=False)
         pool = MessagePool(log_path=self.log_path, load_existing=True)
 
         if precheck:
@@ -95,6 +103,7 @@ class WorkbenchEngine:
                 seed=int(seed),
                 load_model=str(load_model),
                 solar_model=str(solar_model),
+                use_llm=bool(use_llm),
                 epochs=int(epochs),
                 batch_size=int(batch_size),
                 lr=float(lr),
@@ -188,4 +197,3 @@ class WorkbenchEngine:
                 run_id=run_id,
             )
         )
-

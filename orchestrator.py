@@ -55,6 +55,7 @@ def parse_args():
     p.add_argument("--solar_model", type=str, choices=["patchtst", "itransformer"], default="patchtst")
     p.add_argument("--with_baselines", action="store_true", help="In research mode, also run XGBoost baselines for both tracks.")
     p.add_argument("--interactive", action="store_true", help="Enable Phase D1 human-in-the-loop gates (research mode).")
+    p.add_argument("--use_llm", action="store_true", help="Enable OpenAI-backed Task Manager translation (requires OPENAI_API_KEY).")
 
     p.add_argument("--tick_seconds", type=float, default=1.0)
     p.add_argument("--timeout_seconds", type=float, default=600.0)
@@ -77,6 +78,14 @@ def main():
 
     args = parse_args()
     run_id = make_run_id()
+
+    # Load .env if present so OPENAI_API_KEY can be picked up without manual export.
+    try:  # pragma: no cover
+        from dotenv import load_dotenv  # type: ignore
+
+        load_dotenv(override=False)
+    except Exception:
+        pass
 
     pool = MessagePool(log_path="logs/message_pool.jsonl", load_existing=True)
 
@@ -157,6 +166,7 @@ def main():
                     seed=int(args.seed),
                     load_model=str(args.load_model),
                     solar_model=str(args.solar_model),
+                    use_llm=bool(args.use_llm),
                     epochs=int(args.epochs),
                     batch_size=int(args.batch_size),
                     lr=float(args.lr),

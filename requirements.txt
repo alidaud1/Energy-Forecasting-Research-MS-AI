@@ -40,3 +40,7 @@ fastapi>=0.110,<1.0
 uvicorn>=0.25,<1.0
 requests>=2.31,<3.0
 streamlit>=1.33,<2.0
+
+# Phase E3 intelligence (Task Manager boundary)
+openai>=1.40,<2.0
+python-dotenv>=1.0,<2.0

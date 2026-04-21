@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from .base_agent import BaseAgent, AgentConfig
+from ..services.llm_service import LLMService, LLMDirective
 
 
 def _normalize(s: str) -> str:
@@ -137,6 +138,9 @@ class InteractiveResearchConfig:
     lr: float = 1e-3
     patience: int = 10
 
+    # Phase E3: enable OpenAI-backed Task Manager translation (fallback to rules if unavailable).
+    use_llm: bool = False
+
 
 class InteractiveTaskManagerAgent(BaseAgent):
     """
@@ -172,8 +176,49 @@ class InteractiveTaskManagerAgent(BaseAgent):
         self._child_run_id: str = ""
         self._state_summary: Dict[str, Any] = {}
         self._directive_seen: set[str] = set()
+        self._llm = LLMService() if bool(self.rcfg.use_llm) else None
 
         self.subscribe(topics=["system", "prepare", "user_feedback"], start_from="latest")
+
+    def _cached_plans_prompt(self, stage: str) -> str:
+        """
+        Provide the LLM with the current gate prompt as lightweight context.
+        """
+        if stage == "prep":
+            return self._prep_gate_prompt()
+        if stage == "model":
+            return self._gate_prompt()
+        return ""
+
+    def _llm_to_gate_cmd(self, d: LLMDirective) -> Dict[str, Any]:
+        if d.action == "approve":
+            return {"action": "approve"}
+        if d.action == "reject":
+            return {"action": "reject"}
+        if d.action == "set":
+            return {"action": "set", "changes": dict(d.changes or {})}
+        if d.action == "clarify":
+            return {"action": "clarify", "clarification_question": d.clarification_question or "Please clarify."}
+        return {"action": "unknown", "text": ""}
+
+    def _llm_to_postprocess_cmd(self, d: LLMDirective) -> Dict[str, Any]:
+        if d.action in ("accept", "approve"):
+            return {"action": "accept"}
+        if d.action == "reject":
+            return {"action": "reject"}
+        if d.action == "scale" and d.target and d.factor is not None:
+            out: Dict[str, Any] = {"action": "scale", "target": d.target, "factor": float(d.factor)}
+            if d.hours:
+                out["hours"] = str(d.hours)
+            return out
+        if d.action == "bias" and d.target and d.add is not None:
+            out = {"action": "bias", "target": d.target, "add": float(d.add)}
+            if d.hours:
+                out["hours"] = str(d.hours)
+            return out
+        if d.action == "clarify":
+            return {"action": "unknown", "text": d.clarification_question or "Please clarify."}
+        return {"action": "unknown", "text": ""}
 
     def _plan_dict(self) -> Dict[str, Any]:
         if not self.rcfg.comparison_group_id:
@@ -596,12 +641,22 @@ class InteractiveTaskManagerAgent(BaseAgent):
 
                 # Translate human text into structured directives here (TaskManager is the boundary).
                 if gate_id == self.GATE_ID_POSTPROCESS:
-                    cmd = _parse_postprocess_command(payload.get("human_text", ""))
+                    raw = str(payload.get("human_text", ""))
+                    cmd = _parse_postprocess_command(raw)
+                    if cmd.get("action") == "unknown" and self._llm is not None and self._llm.enabled():
+                        llm_dir: LLMDirective = self._llm.translate(
+                            human_text=raw,
+                            gate="postprocess",
+                            gate_prompt=self._cached_plans_prompt("postprocess"),
+                            pinned_state={"plan": self._plan_dict(), "gate": "postprocess"},
+                            recent_events=[],
+                        )
+                        cmd = self._llm_to_postprocess_cmd(llm_dir)
                     self._publish_human_gate_decision(
                         stage="postprocess",
                         gate_id=gate_id,
                         decision="change_requested" if cmd.get("action") not in ("accept", "reject") else cmd.get("action"),
-                        raw_text=str(payload.get("human_text", "")),
+                        raw_text=raw,
                     )
                     self._publish_state_summary(event="directive_parsed", gate_id=gate_id, stage="postprocess", human_text=payload.get("human_text", ""), structured_command=cmd)
                     self.publish(
@@ -634,27 +689,37 @@ class InteractiveTaskManagerAgent(BaseAgent):
                     self._publish_system_directive(
                         stage="postprocess",
                         gate_id=gate_id,
-                        raw_text=str(payload.get("human_text", "")),
+                        raw_text=raw,
                         overrides=overrides,
                         reason="Human postprocess command.",
                     )
                     continue
 
-                cmd = _parse_human_command(payload.get("human_text", ""))
+                raw = str(payload.get("human_text", ""))
+                cmd = _parse_human_command(raw)
+                if cmd.get("action") == "unknown" and self._llm is not None and self._llm.enabled():
+                    llm_dir = self._llm.translate(
+                        human_text=raw,
+                        gate="prep" if gate_id == self.GATE_ID_PREP else "model",
+                        gate_prompt=self._cached_plans_prompt("prep" if gate_id == self.GATE_ID_PREP else "model"),
+                        pinned_state={"plan": self._plan_dict(), "gate": "prep" if gate_id == self.GATE_ID_PREP else "model"},
+                        recent_events=[],
+                    )
+                    cmd = self._llm_to_gate_cmd(llm_dir)
                 self._publish_state_summary(event="directive_parsed", gate_id=gate_id, stage="prep" if gate_id == self.GATE_ID_PREP else "model", human_text=payload.get("human_text", ""), structured_command=cmd)
                 if cmd.get("action") == "set":
                     self._publish_human_gate_decision(
                         stage="prep" if gate_id == self.GATE_ID_PREP else "model",
                         gate_id=gate_id,
                         decision="change_requested",
-                        raw_text=str(payload.get("human_text", "")),
+                        raw_text=raw,
                     )
                     # Best-effort mapping for audit/future use.
                     overrides = {f"plan.{k}": v for k, v in (cmd.get("changes", {}) or {}).items()}
                     self._publish_system_directive(
                         stage="prep" if gate_id == self.GATE_ID_PREP else "model",
                         gate_id=gate_id,
-                        raw_text=str(payload.get("human_text", "")),
+                        raw_text=raw,
                         overrides=overrides,
                         reason="Human requested plan override via CLI.",
                     )
@@ -693,7 +758,7 @@ class InteractiveTaskManagerAgent(BaseAgent):
                         stage="prep" if gate_id == self.GATE_ID_PREP else "model",
                         gate_id=gate_id,
                         decision="approve",
-                        raw_text=str(payload.get("human_text", "")),
+                        raw_text=raw,
                     )
                     if gate_id == self.GATE_ID_PREP:
                         # Only approve when all selected tracks are ready.
@@ -715,12 +780,16 @@ class InteractiveTaskManagerAgent(BaseAgent):
                         stage="prep" if gate_id == self.GATE_ID_PREP else "model",
                         gate_id=gate_id,
                         decision="reject",
-                        raw_text=str(payload.get("human_text", "")),
+                        raw_text=raw,
                     )
                     self._rejected = True
                     self._publish_state_summary(event="gate_rejected", gate_id=gate_id, stage="prep" if gate_id == self.GATE_ID_PREP else "model")
                 else:
                     # Unknown: re-prompt with the same plan.
+                    if cmd.get("action") == "clarify":
+                        q = cmd.get("clarification_question") or ""
+                        if q:
+                            self.publish(topic_type="chat", kind="event", payload={"event": "clarification", "text": q, "gate_id": gate_id})
                     if gate_id == self.GATE_ID_PREP:
                         self._publish_prep_gate_request()
                     else:

@@ -21,6 +21,9 @@ class RunStartRequest(BaseModel):
     load_model: str = Field(default="patchtst")
     solar_model: str = Field(default="patchtst")
 
+    # Phase E3: enable LLM-backed Task Manager translation (requires OPENAI_API_KEY).
+    use_llm: bool = False
+
 
 class RunStartResponse(BaseModel):
     run_id: str
@@ -43,4 +46,3 @@ class SnapshotResponse(BaseModel):
     last_error: str | None = None
     artifacts: dict | None = None
     recent_messages: list[dict] = []
-
