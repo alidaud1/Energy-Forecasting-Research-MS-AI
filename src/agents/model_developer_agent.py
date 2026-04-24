@@ -562,6 +562,7 @@ class ModelDeveloperAgent(BaseAgent):
         cols = payload["columns"]
         window = payload["window"]
         training = payload.get("training", {}) or {}
+        corr_id = payload.get("_correlation_id")
         child_run_id = str(payload.get("child_run_id") or "")
         parent_run_id = str(payload.get("parent_run_id") or "")
         comparison_group_id = str(payload.get("comparison_group_id") or "")
@@ -670,6 +671,29 @@ class ModelDeveloperAgent(BaseAgent):
             early_stopping=EarlyStoppingConfig(patience=patience, min_delta=0.0),
         )
 
+        def _on_epoch_end(epoch: int, train_mse: float, val_mse: float) -> None:
+            if not corr_id:
+                return
+            self.publish(
+                topic_type="train",
+                kind="event",
+                payload={
+                    "event": "epoch_metrics",
+                    "track": track,
+                    "model_family": "transformer",
+                    "model_name": exec_cfg.model_name,
+                    "strategy": exec_cfg.strategy,
+                    "epoch": int(epoch + 1),
+                    "train_mse": float(train_mse),
+                    "val_mse": float(val_mse),
+                    "child_run_id": child_run_id,
+                    "parent_run_id": parent_run_id,
+                    "comparison_group_id": comparison_group_id,
+                    "variant": variant,
+                },
+                correlation_id=str(corr_id),
+            )
+
         train_stats = train_model(
             model=model,
             train_loader=train_loader,
@@ -677,6 +701,7 @@ class ModelDeveloperAgent(BaseAgent):
             device=self.device,
             cfg=tcfg,
             use_hour_embedding=exec_cfg.use_hour_embedding and exec_cfg.model_name.lower() == "patchtst",
+            on_epoch_end=_on_epoch_end,
         )
 
         y_pred_t, y_true_t = predict_batches(
@@ -791,6 +816,9 @@ class ModelDeveloperAgent(BaseAgent):
                             "model_type": msg.payload.get("model_type"),
                             "model_name": msg.payload.get("model_type"),
                             "model_family": "baseline",
+                            # Phase 103: include the exact params used for traceability / importance plots.
+                            "hyperparams": msg.payload.get("hyperparams", {}) or {},
+                            "optuna": msg.payload.get("optuna", {}) or {},
                             "child_run_id": msg.payload.get("child_run_id", ""),
                             "parent_run_id": msg.payload.get("parent_run_id", ""),
                             "comparison_group_id": msg.payload.get("comparison_group_id", ""),
@@ -820,7 +848,9 @@ class ModelDeveloperAgent(BaseAgent):
             # Phase C transformer execution path
             if cmd == "train_execute":
                 try:
-                    result = self._train_transformer_once(msg.payload)
+                    payload = dict(msg.payload)
+                    payload["_correlation_id"] = corr_id
+                    result = self._train_transformer_once(payload)
                     self.publish(topic_type="evaluate", kind="result", payload={"event": "evaluation_complete", **result}, correlation_id=corr_id)
                 except Exception as e:
                     self.publish(

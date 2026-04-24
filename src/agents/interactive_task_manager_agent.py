@@ -98,6 +98,22 @@ def _parse_postprocess_command(text: str) -> Dict[str, Any]:
     out: Dict[str, Any] = {"action": action, "target": target}
     if "hours" in kv:
         out["hours"] = kv["hours"]
+    # Phase 105/104: threshold-triggered deployment rules (Table I)
+    # - theta: load-based trigger threshold on y_pred
+    # - phi_col + phi_theta: external-variable trigger
+    if "theta" in kv:
+        try:
+            out["theta"] = float(kv["theta"])
+        except Exception:
+            # keep raw so it remains traceable even if invalid
+            out["theta"] = kv["theta"]
+    if "phi_col" in kv:
+        out["phi_col"] = kv["phi_col"]
+    if "phi_theta" in kv:
+        try:
+            out["phi_theta"] = float(kv["phi_theta"])
+        except Exception:
+            out["phi_theta"] = kv["phi_theta"]
     if action == "scale":
         try:
             out["factor"] = float(kv.get("factor", ""))
@@ -651,6 +667,28 @@ class InteractiveTaskManagerAgent(BaseAgent):
                             pinned_state={"plan": self._plan_dict(), "gate": "postprocess"},
                             recent_events=[],
                         )
+                        usage = self._llm.last_usage() if self._llm is not None else {}
+                        if usage:
+                            cost_usd = self._llm.last_cost_usd() if self._llm is not None else None
+                            self.publish(
+                                topic_type="llm_usage",
+                                kind="event",
+                                payload={"event": "llm_usage", "gate": "postprocess", "usage": usage, "cost_usd": cost_usd},
+                                correlation_id=self._corr_id,
+                            )
+                            # Phase 103: normalized cost telemetry event for dashboards.
+                            self.publish(
+                                topic_type="telemetry_cost",
+                                kind="event",
+                                payload={
+                                    "event": "telemetry_cost",
+                                    "stage": "postprocess",
+                                    "agent": self.agent_id,
+                                    "tokens_used": usage,
+                                    "cost_usd": cost_usd,
+                                },
+                                correlation_id=self._corr_id,
+                            )
                         cmd = self._llm_to_postprocess_cmd(llm_dir)
                     self._publish_human_gate_decision(
                         stage="postprocess",
@@ -680,12 +718,24 @@ class InteractiveTaskManagerAgent(BaseAgent):
                         overrides["postprocess.factor"] = cmd.get("factor")
                         if cmd.get("hours"):
                             overrides["postprocess.hours"] = cmd.get("hours")
+                        if cmd.get("theta") is not None:
+                            overrides["postprocess.theta"] = cmd.get("theta")
+                        if cmd.get("phi_col"):
+                            overrides["postprocess.phi_col"] = cmd.get("phi_col")
+                        if cmd.get("phi_theta") is not None:
+                            overrides["postprocess.phi_theta"] = cmd.get("phi_theta")
                     if cmd.get("action") == "bias":
                         overrides["postprocess.action"] = "bias"
                         overrides["postprocess.target"] = cmd.get("target")
                         overrides["postprocess.add"] = cmd.get("add")
                         if cmd.get("hours"):
                             overrides["postprocess.hours"] = cmd.get("hours")
+                        if cmd.get("theta") is not None:
+                            overrides["postprocess.theta"] = cmd.get("theta")
+                        if cmd.get("phi_col"):
+                            overrides["postprocess.phi_col"] = cmd.get("phi_col")
+                        if cmd.get("phi_theta") is not None:
+                            overrides["postprocess.phi_theta"] = cmd.get("phi_theta")
                     self._publish_system_directive(
                         stage="postprocess",
                         gate_id=gate_id,
@@ -705,6 +755,27 @@ class InteractiveTaskManagerAgent(BaseAgent):
                         pinned_state={"plan": self._plan_dict(), "gate": "prep" if gate_id == self.GATE_ID_PREP else "model"},
                         recent_events=[],
                     )
+                    usage = self._llm.last_usage() if self._llm is not None else {}
+                    if usage:
+                        cost_usd = self._llm.last_cost_usd() if self._llm is not None else None
+                        self.publish(
+                            topic_type="llm_usage",
+                            kind="event",
+                            payload={"event": "llm_usage", "gate": "prep" if gate_id == self.GATE_ID_PREP else "model", "usage": usage, "cost_usd": cost_usd},
+                            correlation_id=self._corr_id,
+                        )
+                        self.publish(
+                            topic_type="telemetry_cost",
+                            kind="event",
+                            payload={
+                                "event": "telemetry_cost",
+                                "stage": "prep" if gate_id == self.GATE_ID_PREP else "model",
+                                "agent": self.agent_id,
+                                "tokens_used": usage,
+                                "cost_usd": cost_usd,
+                            },
+                            correlation_id=self._corr_id,
+                        )
                     cmd = self._llm_to_gate_cmd(llm_dir)
                 self._publish_state_summary(event="directive_parsed", gate_id=gate_id, stage="prep" if gate_id == self.GATE_ID_PREP else "model", human_text=payload.get("human_text", ""), structured_command=cmd)
                 if cmd.get("action") == "set":

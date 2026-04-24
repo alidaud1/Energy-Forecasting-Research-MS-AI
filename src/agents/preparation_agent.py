@@ -16,7 +16,10 @@ class PreparationAgent(BaseAgent):
 
     def __init__(self, cfg, pool):
         super().__init__(cfg, pool)
-        self.subscribe(topics=["prepare"], start_from="latest")
+        # Phase 103: listen to optional system_directive so we can record human preferences
+        # about preparation/cleaning/loss without breaking the non-interactive pipeline.
+        self.subscribe(topics=["prepare", "system_directive"], start_from="latest")
+        self._prep_preferences: Dict[str, Any] = {}
 
     def _resolve_path(self, manifest_path: Path, artifact_path: str) -> Path:
         p = Path(artifact_path)
@@ -104,7 +107,16 @@ class PreparationAgent(BaseAgent):
         }
 
     def tick(self) -> None:
-        for msg in self.poll(max_messages=20):
+        for msg in self.poll(max_messages=50):
+            # Record any preparation-related preferences (best-effort, non-blocking).
+            if msg.kind == "event" and msg.topic.startswith(f"system_directive/{self.run_id}"):
+                p = msg.payload or {}
+                overrides = p.get("overrides") or {}
+                if isinstance(overrides, dict):
+                    # Keep everything; downstream can filter. This is telemetry only.
+                    self._prep_preferences.update({str(k): overrides[k] for k in overrides.keys()})
+                continue
+
             if msg.kind != "command":
                 continue
             if msg.payload.get("command") != "prepare":
@@ -114,18 +126,43 @@ class PreparationAgent(BaseAgent):
             run_cfg = msg.payload.get("run_config", {}) or {}
 
             try:
+                # Phase 103: explicit staged telemetry for Fig.4-like preparation workflow.
+                self.publish(
+                    topic_type="prepare_step",
+                    kind="event",
+                    payload={"event": "metadata_collected", "manifest_path": msg.payload.get("manifest_path"), "track": msg.payload.get("track")},
+                    correlation_id=corr_id,
+                )
                 info = self._verify_manifest_and_paths(
                     manifest_path=msg.payload["manifest_path"],
                     track=msg.payload["track"],
                 )
+                self.publish(
+                    topic_type="prepare_step",
+                    kind="event",
+                    payload={"event": "validity_check_passed", "track": info["track"]},
+                    correlation_id=corr_id,
+                )
 
                 cols = info["columns"]
                 target_col = (cols.get("target_cols") or [""])[0]
+                self.publish(
+                    topic_type="prepare_step",
+                    kind="event",
+                    payload={"event": "columns_defined", "track": info["track"], "target_col": target_col, "n_hist": len(cols.get("hist_cols") or []), "n_future": len(cols.get("future_cols") or [])},
+                    correlation_id=corr_id,
+                )
                 summary = {}
                 for split in ("train_scaled", "val_scaled", "test_scaled"):
                     p = info["paths"].get(split)
                     if p and target_col:
                         summary[split] = self._summarize_split(p, target_col=target_col)
+                self.publish(
+                    topic_type="prepare_step",
+                    kind="event",
+                    payload={"event": "cleaning_preferences_captured", "track": info["track"], "preferences": dict(self._prep_preferences)},
+                    correlation_id=corr_id,
+                )
                 self.publish(
                     topic_type="prepare",
                     kind="event",
@@ -136,6 +173,7 @@ class PreparationAgent(BaseAgent):
                         "paths": info["paths"],
                         "columns": info["columns"],
                         "summary": summary,
+                        "prep_preferences": dict(self._prep_preferences),
                         "run_config": run_cfg,
                     },
                     correlation_id=corr_id,

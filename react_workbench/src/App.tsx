@@ -3,6 +3,8 @@ import ReactMarkdown from "react-markdown";
 import GateModal from "./components/GateModal";
 import LogConsole from "./components/LogConsole";
 import ForecastChart from "./components/ForecastChart";
+import AgentFlowDiagram from "./components/AgentFlowDiagram";
+import VisualizationPanel from "./components/VisualizationPanel";
 import { getJson, postJson, staticUrl, wsBase } from "./api";
 import { PredictionsResponse, PoolMessage, WsEnvelope } from "./types";
 
@@ -19,6 +21,7 @@ export default function App() {
   const [runId, setRunId] = React.useState<string>("");
   const [status, setStatus] = React.useState<string>("");
   const [messages, setMessages] = React.useState<PoolMessage[]>([]);
+  const [tab, setTab] = React.useState<"workbench" | "agent_flow">("workbench");
 
   const [gateOpen, setGateOpen] = React.useState(false);
   const [gateStage, setGateStage] = React.useState("");
@@ -201,6 +204,18 @@ export default function App() {
       <header className="px-4 py-3 bg-ieeeBlue border-b border-neutral-200 flex items-center justify-between">
         <div className="font-bold">Unified Agent Workbench</div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setTab("workbench")}
+            className={`text-sm px-3 py-1.5 rounded-md ${tab === "workbench" ? "bg-white font-semibold" : "bg-white/70 hover:bg-white"}`}
+          >
+            Workbench
+          </button>
+          <button
+            onClick={() => setTab("agent_flow")}
+            className={`text-sm px-3 py-1.5 rounded-md ${tab === "agent_flow" ? "bg-white font-semibold" : "bg-white/70 hover:bg-white"}`}
+          >
+            Agent Flow
+          </button>
           <button onClick={() => refreshRuns()} className="text-sm px-3 py-1.5 rounded-md bg-white/70 hover:bg-white">
             Refresh
           </button>
@@ -248,6 +263,10 @@ export default function App() {
         </section>
 
         <section className="col-span-12 lg:col-span-9 space-y-4">
+          {tab === "agent_flow" ? (
+            <AgentFlowDiagram runId={runId} />
+          ) : (
+            <>
           <div className="rounded-xl border border-neutral-200 overflow-hidden">
             <div className="px-3 py-2 bg-neutral-50 text-sm font-semibold">View Controls</div>
             <div className="p-3 flex flex-wrap gap-3 items-end">
@@ -324,10 +343,14 @@ export default function App() {
             </div>
           </div>
 
+          <VisualizationPanel runId={runId} messages={messages.filter((m) => m.run_id === runId)} loadChartData={loadChartData} solarChartData={solarChartData} />
+
           <div className="rounded-xl border border-neutral-200 overflow-hidden">
             <div className="px-3 py-2 bg-neutral-50 text-sm font-semibold">Chat / Feedback</div>
             <ChatBox onSend={(t) => sendFeedback(t)} />
           </div>
+            </>
+          )}
         </section>
       </main>
     </div>

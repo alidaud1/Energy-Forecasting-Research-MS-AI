@@ -17,6 +17,7 @@ from src.agents.task_manager_agent import RunConfig, TaskManagerAgent
 from src.agents.load_forecasting_agent import LoadForecastingAgent
 from src.agents.solar_forecasting_agent import SolarForecastingAgent
 from src.agents.forecast_integration_agent import ForecastIntegrationAgent
+from src.agents.deployment_operator import DeploymentOperatorAgent
 from src.agents.messages import Message, TopicId
 from src.phase_c_precheck import run_phase_c_precheck
 from src.agents.interactive_task_manager_agent import InteractiveResearchConfig, InteractiveTaskManagerAgent
@@ -45,6 +46,11 @@ def parse_args():
 
     p.add_argument("--hpo", action="store_true", help="Enable Optuna skeleton (1 trial by default)")
     p.add_argument("--n_trials", type=int, default=1)
+    # Phase 104: batched ask/tell interactive BO controls (baseline mode only).
+    p.add_argument("--init_batch_K", type=int, default=1, help="Initial Optuna ask() batch size (baseline mode).")
+    p.add_argument("--batch_B", type=int, default=1, help="Subsequent Optuna ask() batch size (baseline mode).")
+    p.add_argument("--epsilon_rmse", type=float, default=float("nan"), help="Early-stop when best RMSE <= epsilon (baseline mode).")
+    p.add_argument("--constant_liar", action="store_true", help="Enable constant-liar batching heuristic for Optuna TPE (baseline mode).")
 
     # Research mode (transformers)
     p.add_argument("--epochs", type=int, default=50)
@@ -115,6 +121,10 @@ def main():
                 "n_trials": int(args.n_trials),
                 "study_name": f"study_{run_id}",
                 "storage": None,
+                "init_batch_K": int(args.init_batch_K),
+                "batch_B": int(args.batch_B),
+                "epsilon_rmse": None if not (args.epsilon_rmse == args.epsilon_rmse) else float(args.epsilon_rmse),
+                "constant_liar": bool(args.constant_liar),
             },
         )
 
@@ -202,9 +212,10 @@ def main():
         load_agent = LoadForecastingAgent(AgentConfig(agent_id="LoadForecastingAgent", role="load_forecasting", run_id=run_id), pool)
         solar_agent = SolarForecastingAgent(AgentConfig(agent_id="SolarForecastingAgent", role="solar_forecasting", run_id=run_id), pool)
         dev = ModelDeveloperAgent(AgentConfig(agent_id="ModelDeveloperAgent", role="model_developer", run_id=run_id), pool)
+        deploy = DeploymentOperatorAgent(AgentConfig(agent_id="DeploymentOperatorAgent", role="deployment", run_id=run_id), pool)
         integ = ForecastIntegrationAgent(AgentConfig(agent_id="ForecastIntegrationAgent", role="forecast_integration", run_id=run_id), pool)
 
-        agents = ([interactive_tm] if interactive_tm is not None else [tm_load, tm_solar]) + [prep, load_agent, solar_agent, dev, integ]
+        agents = ([interactive_tm] if interactive_tm is not None else [tm_load, tm_solar]) + [prep, load_agent, solar_agent, dev, deploy, integ]
 
     start = time.time()
     done = False

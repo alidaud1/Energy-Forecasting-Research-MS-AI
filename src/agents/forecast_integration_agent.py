@@ -51,7 +51,7 @@ class ForecastIntegrationAgent(BaseAgent):
         super().__init__(cfg, pool)
         # Phase D3/D4: listen to system_directive + directive_ack/rejected for comparative audit traces.
         self.subscribe(
-            topics=["evaluate", "system", "prepare", "directive", "system_directive", "directive_ack", "directive_rejected", "human_gate_decision"],
+            topics=["evaluate", "system", "prepare", "directive", "system_directive", "directive_ack", "directive_rejected", "human_gate_decision", "deploy"],
             start_from="latest",
         )
 
@@ -70,6 +70,10 @@ class ForecastIntegrationAgent(BaseAgent):
         self._post_gate_requested = False
         self._post_done = False
         self._post_action: Dict[str, Any] = {}
+        # Phase 105: deployment-stage operator handoff
+        self._deploy_requested = False
+        self._deploy_done = False
+        self._deploy_info: Dict[str, Any] = {}
         self._cached_best: Dict[str, Dict[str, Any]] = {}
         self._cached_net_info: Dict[str, Any] = {}
         self._cached_plots: Dict[str, str] = {}
@@ -906,6 +910,18 @@ class ForecastIntegrationAgent(BaseAgent):
                 "variant": variant,
             }
 
+        # Phase 105: capture DeploymentOperator results so we can include them in the final integrate payload.
+        deploy_msgs = self.pool.find_by_topic("deploy", topic_source=self.run_id)
+        for m in reversed(deploy_msgs):
+            if m.kind == "result" and (m.payload or {}).get("event") == "deploy_complete":
+                self._deploy_done = True
+                self._deploy_info = dict(m.payload or {})
+                break
+            if m.kind == "error" and (m.payload or {}).get("event") == "deploy_failed":
+                self._deploy_done = True
+                self._deploy_info = {"computed": False, "reason": (m.payload or {}).get("error")}
+                break
+
         if self._finalized or not self._ready_to_finalize():
             return
 
@@ -1045,7 +1061,8 @@ class ForecastIntegrationAgent(BaseAgent):
                 )
             return
 
-        # Apply postprocess adjustment if requested (writes child-run artifacts, does not overwrite originals).
+        # Phase 105: deployment-stage postprocess adjustment
+        # We delegate scaling/bias to DeploymentOperatorAgent and wait for deploy_complete.
         child_info: Dict[str, Any] = {}
         if self._interactive and self._post_done:
             action = self._post_action or {"action": "accept"}
@@ -1053,61 +1070,50 @@ class ForecastIntegrationAgent(BaseAgent):
                 action = {"action": "accept"}
 
             if action.get("action") in ("scale", "bias"):
-                child_id = f"child_{self._utc_compact()}_postprocess"
-                child_dir = self.run_dir / "child_runs" / child_id
-                (child_dir / "predictions").mkdir(parents=True, exist_ok=True)
-                (child_dir / "reports").mkdir(parents=True, exist_ok=True)
+                if not self._deploy_requested:
+                    self._deploy_requested = True
+                    target = str(action.get("target"))
+                    best = best_load if target == "load" else best_solar
+                    pred_path = best["artifacts"].get("predictions_path")
 
-                target = str(action.get("target"))
-                best = best_load if target == "load" else best_solar
-                pred_path = best["artifacts"].get("predictions_path")
-                if pred_path:
-                    df = self._read_preds(pred_path)
-                    df_adj = self._apply_adjustment(df, action)
-                    df_adj["run_id"] = child_id
-                    df_adj["parent_run_id"] = self.run_id
-                    df_adj["variant"] = "adjusted"
-                    df_adj["adjustment"] = json.dumps(action, ensure_ascii=False)
+                    # Find a data split path for phi_t merge (external-variable trigger). Prefer unscaled test.
+                    data_path = ""
+                    try:
+                        preps = self.pool.find_by_topic("prepare", topic_source=self.run_id)
+                        for pm in reversed(preps):
+                            if pm.kind == "event" and (pm.payload or {}).get("event") == "ready" and (pm.payload or {}).get("track") == target:
+                                paths = (pm.payload or {}).get("paths", {}) or {}
+                                data_path = str(paths.get("test") or "")
+                                break
+                    except Exception:
+                        data_path = ""
 
-                    out_pred = child_dir / "predictions" / f"{target}_adjusted_predictions.parquet"
-                    df_adj.to_parquet(out_pred)
-
-                    adj_metrics = self._metrics_from_preds(df_adj)
-                    child_info = {
-                        "child_run_id": child_id,
-                        "parent_run_id": self.run_id,
-                        "target": target,
-                        "adjustment": action,
-                        "adjusted_predictions_path": out_pred.as_posix(),
-                        "adjusted_metrics": adj_metrics,
-                    }
-
-                    # Write a concise comparison report
-                    rep = child_dir / "reports" / "postprocess_comparison.md"
-                    before = best.get("metrics", {}) or {}
-                    rep.write_text(
-                        "\n".join(
-                            [
-                                f"# Post-Process Comparison ({child_id})",
-                                "",
-                                f"- parent_run_id: `{self.run_id}`",
-                                f"- target: `{target}`",
-                                f"- adjustment: `{action}`",
-                                "",
-                                "## Metrics (before vs after)",
-                                f"- before MAE={before.get('mae')} RMSE={before.get('rmse')}",
-                                f"- after  MAE={adj_metrics.get('mae')} RMSE={adj_metrics.get('rmse')}",
-                                "",
-                                f"- adjusted_predictions: `{out_pred.as_posix()}`",
-                            ]
+                    if pred_path:
+                        self.publish(
+                            topic_type="deploy",
+                            kind="command",
+                            payload={
+                                "command": "deploy",
+                                "track": target,
+                                "original_predictions_path": pred_path,
+                                "original_metrics": dict(best.get("metrics", {}) or {}),
+                                "adjustment": dict(action),
+                                "data_path": data_path,
+                                "child_run_id": f"child_{self._utc_compact()}_postprocess",
+                            },
                         )
-                        + "\n",
-                        encoding="utf-8",
-                    )
-                else:
-                    child_info = {"computed": False, "reason": "missing predictions_path for selected target", "adjustment": action}
+                    else:
+                        self._deploy_done = True
+                        self._deploy_info = {"computed": False, "reason": "missing predictions_path for selected target", "adjustment": action}
 
-            # reject == accept (no changes), but we still proceed to finalize
+                if not self._deploy_done:
+                    return
+
+                # Once done, include deploy result as postprocess child_info.
+                child_info = dict(self._deploy_info or {})
+            else:
+                # accept/reject: no adjustment
+                child_info = {}
 
         # Now produce final reports (optionally referencing child adjustment in the final summary via net_load payload).
         joint_report, final_report = self._write_reports(best_load=best_load, best_solar=best_solar, net_info=net_info, plots=plots)

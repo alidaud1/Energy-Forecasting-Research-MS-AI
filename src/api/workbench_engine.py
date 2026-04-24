@@ -13,6 +13,7 @@ from ..agents.load_forecasting_agent import LoadForecastingAgent
 from ..agents.solar_forecasting_agent import SolarForecastingAgent
 from ..agents.model_developer_agent import ModelDeveloperAgent
 from ..agents.forecast_integration_agent import ForecastIntegrationAgent
+from ..agents.deployment_operator import DeploymentOperatorAgent
 from ..agents.messages import Message, TopicId
 from ..agents.interactive_task_manager_agent import InteractiveResearchConfig, InteractiveTaskManagerAgent
 from ..phase_c_precheck import run_phase_c_precheck
@@ -114,8 +115,9 @@ class WorkbenchEngine:
         load_agent = LoadForecastingAgent(AgentConfig(agent_id="LoadForecastingAgent", role="load_forecasting", run_id=run_id), pool)
         solar_agent = SolarForecastingAgent(AgentConfig(agent_id="SolarForecastingAgent", role="solar_forecasting", run_id=run_id), pool)
         dev = ModelDeveloperAgent(AgentConfig(agent_id="ModelDeveloperAgent", role="model_developer", run_id=run_id), pool)
+        deploy = DeploymentOperatorAgent(AgentConfig(agent_id="DeploymentOperatorAgent", role="deployment", run_id=run_id), pool)
         integ = ForecastIntegrationAgent(AgentConfig(agent_id="ForecastIntegrationAgent", role="forecast_integration", run_id=run_id), pool)
-        agents = [tm, prep, load_agent, solar_agent, dev, integ]
+        agents = [tm, prep, load_agent, solar_agent, dev, deploy, integ]
 
         rt = RunRuntime(run_id=run_id, pool=pool, agents=agents)
 

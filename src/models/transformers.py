@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -266,14 +266,19 @@ def train_model(
     cfg: TrainerConfig,
     *,
     use_hour_embedding: bool = False,
+    on_epoch_end: Optional[Callable[[int, float, float], Any]] = None,
 ) -> Dict[str, float]:
     model.to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
 
     stopper = EarlyStopping(cfg.early_stopping)
 
-    for _epoch in range(cfg.epochs):
+    history: Dict[str, List[float]] = {"train_mse": [], "val_mse": []}
+
+    for epoch in range(cfg.epochs):
         model.train()
+        train_num = 0.0
+        train_den = 0.0
         for batch in train_loader:
             opt.zero_grad(set_to_none=True)
             if use_hour_embedding:
@@ -289,6 +294,10 @@ def train_model(
                 yhat = model(x)
 
             loss = F.mse_loss(yhat, y)
+            # Weight by element count so epoch-average reflects variable batch sizes.
+            n_el = float(y.numel())
+            train_num += float(loss.detach().cpu()) * n_el
+            train_den += n_el
             loss.backward()
             if cfg.grad_clip_norm and cfg.grad_clip_norm > 0:
                 torch.nn.utils.clip_grad_norm_(model.parameters(), cfg.grad_clip_norm)
@@ -297,10 +306,19 @@ def train_model(
         # validation
         y_pred, y_true = predict_batches(model, val_loader, device, use_hour_embedding=use_hour_embedding)
         val_loss = float(F.mse_loss(y_pred, y_true).cpu())
+        train_loss = float(train_num / max(1.0, train_den))
+        history["train_mse"].append(train_loss)
+        history["val_mse"].append(val_loss)
+
+        if on_epoch_end is not None:
+            try:
+                on_epoch_end(epoch, train_loss, val_loss)
+            except Exception:
+                # Training must not crash due to telemetry callbacks.
+                pass
         if stopper.step(val_loss, model):
             break
 
     if stopper.best_state is not None:
         model.load_state_dict(stopper.best_state)
-    return {"best_val_mse": float(stopper.best)}
-
+    return {"best_val_mse": float(stopper.best), "history": history}  # type: ignore[return-value]
