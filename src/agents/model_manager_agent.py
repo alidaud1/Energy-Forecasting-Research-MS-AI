@@ -57,9 +57,23 @@ class ModelManagerAgent(BaseAgent):
         self._guided_ranges: Dict[str, Tuple[float, float, bool, bool]] = {}
 
     def _make_default_params(self, model_type: str) -> Dict[str, Any]:
-        if model_type == "linear":
-            return {"fit_intercept": True}
-        if model_type == "xgboost":
+        mt = str(model_type or "").lower()
+        if mt == "linear":
+            # Table II: regularization + alpha (alpha only used for ridge).
+            return {"fit_intercept": True, "regularization": "none", "alpha": 0.1}
+        if mt == "svr":
+            return {"C": 1.0, "gamma": 0.1}
+        if mt == "mlp":
+            # Table II: hidden_layers, hidden_size, learning_rate, dropout
+            return {"hidden_layers": 2, "hidden_size": 64, "learning_rate": 1e-3, "dropout": 0.1}
+        if mt in ("lstm", "gru"):
+            # Table II: layers, hidden_size, fc_size, learning_rate
+            return {"layers": 1, "hidden_size": 64, "fc_size": 64, "learning_rate": 1e-3}
+        if mt == "cnn":
+            # Table II: layers, kernel_size, filters, fc_size, learning_rate
+            return {"layers": 1, "kernel_size": 3, "filters": 32, "fc_size": 64, "learning_rate": 1e-3}
+        if mt == "xgboost":
+            # Keep non-Table-II params fixed; only sample the Table II bounds when HPO is enabled.
             return {
                 "n_estimators": 300,
                 "max_depth": 6,
@@ -169,30 +183,52 @@ class ModelManagerAgent(BaseAgent):
         if self.hpo_state:
             self.hpo_state.current_trial_number = self._trial.number
 
-        if model_type == "xgboost":
+        mt = str(model_type or "").lower()
+
+        # Table II search spaces (strict bounds/steps).
+        if mt == "linear":
             p = dict(default_params)
+            p["regularization"] = self._trial.suggest_categorical("regularization", ["none", "ridge"])
+            p["alpha"] = self._trial.suggest_float("alpha", 1e-4, 1.0, log=True)
+            return p
 
-            md_lo, md_hi, _, _ = self._range("max_depth", default=(3.0, 10.0, True, False))
-            lr_lo, lr_hi, _, _ = self._range("learning_rate", default=(1e-3, 0.3, False, True))
-            ss_lo, ss_hi, _, _ = self._range("subsample", default=(0.5, 1.0, False, False))
-            cs_lo, cs_hi, _, _ = self._range("colsample_bytree", default=(0.5, 1.0, False, False))
-            rl_lo, rl_hi, _, _ = self._range("reg_lambda", default=(1e-8, 10.0, False, True))
-            ne_lo, ne_hi, _, _ = self._range("n_estimators", default=(100.0, 800.0, True, False))
+        if mt == "svr":
+            p = dict(default_params)
+            p["C"] = self._trial.suggest_float("C", 1e-3, 1e3, log=True)
+            p["gamma"] = self._trial.suggest_float("gamma", 1e-3, 1e3, log=True)
+            return p
 
-            # sanitize
-            md_lo_i, md_hi_i = int(md_lo), int(md_hi)
-            ne_lo_i, ne_hi_i = int(ne_lo), int(ne_hi)
-            if md_hi_i < md_lo_i:
-                md_lo_i, md_hi_i = md_hi_i, md_lo_i
-            if ne_hi_i < ne_lo_i:
-                ne_lo_i, ne_hi_i = ne_hi_i, ne_lo_i
+        if mt == "mlp":
+            p = dict(default_params)
+            p["hidden_layers"] = self._trial.suggest_int("hidden_layers", 2, 5, step=1)
+            p["hidden_size"] = self._trial.suggest_int("hidden_size", 16, 512, log=True)
+            p["learning_rate"] = self._trial.suggest_float("learning_rate", 1e-4, 1e-1, log=True)
+            p["dropout"] = self._trial.suggest_float("dropout", 0.0, 0.5)
+            return p
 
-            p["max_depth"] = self._trial.suggest_int("max_depth", md_lo_i, md_hi_i)
-            p["learning_rate"] = self._trial.suggest_float("learning_rate", float(lr_lo), float(lr_hi), log=True)
-            p["subsample"] = self._trial.suggest_float("subsample", float(ss_lo), float(ss_hi))
-            p["colsample_bytree"] = self._trial.suggest_float("colsample_bytree", float(cs_lo), float(cs_hi))
-            p["reg_lambda"] = self._trial.suggest_float("reg_lambda", float(rl_lo), float(rl_hi), log=True)
-            p["n_estimators"] = self._trial.suggest_int("n_estimators", ne_lo_i, ne_hi_i)
+        if mt in ("lstm", "gru"):
+            p = dict(default_params)
+            p["layers"] = self._trial.suggest_int("layers", 1, 3, step=1)
+            p["hidden_size"] = self._trial.suggest_int("hidden_size", 16, 512, log=True)
+            p["fc_size"] = self._trial.suggest_int("fc_size", 16, 512, log=True)
+            p["learning_rate"] = self._trial.suggest_float("learning_rate", 1e-4, 1e-1, log=True)
+            return p
+
+        if mt == "cnn":
+            p = dict(default_params)
+            p["layers"] = self._trial.suggest_int("layers", 1, 3, step=1)
+            p["kernel_size"] = self._trial.suggest_int("kernel_size", 1, 5, step=1)
+            p["filters"] = self._trial.suggest_int("filters", 16, 128, log=True)
+            p["fc_size"] = self._trial.suggest_int("fc_size", 16, 512, log=True)
+            p["learning_rate"] = self._trial.suggest_float("learning_rate", 1e-4, 1e-1, log=True)
+            return p
+
+        if mt == "xgboost":
+            # Strict Table II bounds + step sizes.
+            p = dict(default_params)
+            p["n_estimators"] = self._trial.suggest_int("n_estimators", 10, 300, step=10)
+            p["max_depth"] = self._trial.suggest_int("max_depth", 4, 16, step=2)
+            p["learning_rate"] = self._trial.suggest_float("learning_rate", 1e-4, 1e-1, log=True)
             return p
 
         return default_params

@@ -34,7 +34,13 @@ def parse_args():
     p.add_argument("--mode", type=str, choices=["baseline", "research"], default="baseline")
     p.add_argument("--manifest", type=str, default="data/processed/dataset_manifest.json")
     p.add_argument("--track", type=str, choices=["load", "solar"], default="load", help="Used in baseline mode.")
-    p.add_argument("--model", type=str, choices=["linear", "xgboost"], default="xgboost", help="Used in baseline mode.")
+    p.add_argument(
+        "--model",
+        type=str,
+        choices=["linear", "svr", "mlp", "lstm", "gru", "cnn", "xgboost"],
+        default="xgboost",
+        help="Used in baseline mode.",
+    )
 
     p.add_argument("--W", type=int, default=168)
     p.add_argument("--H", type=int, default=24)
@@ -51,6 +57,12 @@ def parse_args():
     p.add_argument("--batch_B", type=int, default=1, help="Subsequent Optuna ask() batch size (baseline mode).")
     p.add_argument("--epsilon_rmse", type=float, default=float("nan"), help="Early-stop when best RMSE <= epsilon (baseline mode).")
     p.add_argument("--constant_liar", action="store_true", help="Enable constant-liar batching heuristic for Optuna TPE (baseline mode).")
+    p.add_argument(
+        "--feature_search",
+        type=str,
+        default="",
+        help="Optional JSON file path containing Table III feature-group config (baseline mode).",
+    )
 
     # Research mode (transformers)
     p.add_argument("--epochs", type=int, default=50)
@@ -106,6 +118,17 @@ def main():
                     print(f"- {i['track']}::{i['split']}::{i['kind']}: {i['detail']}", flush=True)
                 raise SystemExit(2)
 
+        feature_search = {}
+        if args.feature_search:
+            try:
+                import json
+
+                feature_search = json.loads(Path(args.feature_search).read_text(encoding="utf-8"))
+                if not isinstance(feature_search, dict):
+                    feature_search = {}
+            except Exception:
+                feature_search = {}
+
         run_cfg = RunConfig(
             manifest_path=args.manifest,
             track=args.track,
@@ -126,6 +149,7 @@ def main():
                 "epsilon_rmse": None if not (args.epsilon_rmse == args.epsilon_rmse) else float(args.epsilon_rmse),
                 "constant_liar": bool(args.constant_liar),
             },
+            feature_search=feature_search,
         )
 
         task_manager = TaskManagerAgent(

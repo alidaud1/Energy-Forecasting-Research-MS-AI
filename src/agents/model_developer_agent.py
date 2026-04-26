@@ -15,12 +15,23 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from sklearn.linear_model import LinearRegression
+from sklearn.linear_model import Ridge
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.multioutput import MultiOutputRegressor
+from sklearn.svm import SVR
 
 import xgboost as xgb
 
 from src.data_loaders.windowing import SlidingWindowDataset, WindowConfig
+from src.models.baselines import (
+    CNNBaseline,
+    MLPBaseline,
+    RNNBaseline,
+    TorchTrainConfig,
+    to_tensor,
+    train_torch_regressor,
+    train_torch_seq_regressor,
+)
 from src.models.transformers import (
     EarlyStoppingConfig,
     ITransformerConfig,
@@ -260,14 +271,100 @@ class ModelDeveloperAgent(BaseAgent):
         return X, Y
 
     def _make_model(self, model_type: str, hyperparams: dict):
-        if model_type == "linear":
-            return LinearRegression(**{k: v for k, v in hyperparams.items() if k in ["fit_intercept"]})
+        mt = str(model_type or "").lower()
+        if mt == "linear":
+            reg = str(hyperparams.get("regularization", "none")).lower()
+            fit_intercept = bool(hyperparams.get("fit_intercept", True))
+            if reg == "ridge":
+                alpha = float(hyperparams.get("alpha", 0.1))
+                return Ridge(alpha=alpha, fit_intercept=fit_intercept)
+            return LinearRegression(fit_intercept=fit_intercept)
 
-        if model_type == "xgboost":
+        if mt == "svr":
+            C = float(hyperparams.get("C", 1.0))
+            gamma = float(hyperparams.get("gamma", 0.1))
+            base = SVR(C=C, gamma=gamma, kernel="rbf")
+            return MultiOutputRegressor(base)
+
+        if mt == "xgboost":
             base = xgb.XGBRegressor(objective="reg:squarederror", **hyperparams)
             return MultiOutputRegressor(base)
 
         raise ValueError(f"Unsupported model_type: {model_type}")
+
+    def _build_xy_seq_from_windows(
+        self,
+        df: pd.DataFrame,
+        *,
+        hist_cols: list[str],
+        future_cols: list[str],
+        target_cols: list[str],
+        W: int,
+        H: int,
+        stride: int,
+        max_windows: int,
+        require_finite_targets: bool,
+        progress_label: str,
+        correlation_id: str | None = None,
+        return_base_indices: bool = False,
+    ):
+        ds = SlidingWindowDataset(
+            df=df,
+            hist_cols=hist_cols,
+            future_cols=future_cols,
+            target_cols=target_cols,
+            cfg=WindowConfig(W=W, H=H, stride=stride),
+            return_times=False,
+        )
+
+        n = len(ds)
+        take = min(n, max_windows) if max_windows > 0 else n
+
+        XH: list[np.ndarray] = []
+        XF: list[np.ndarray] = []
+        Y: list[np.ndarray] = []
+        kept_base_idxs: list[int] = []
+        skipped = 0
+
+        for i in range(take):
+            x_hist_t, x_fut_t, y_t = ds[i]
+            x_hist = x_hist_t.numpy()
+            x_fut = x_fut_t.numpy()
+            y = y_t.numpy()
+
+            if require_finite_targets and not np.isfinite(y).all():
+                skipped += 1
+                continue
+
+            XH.append(x_hist.astype(np.float32))
+            XF.append(x_fut.reshape(-1).astype(np.float32))
+            Y.append(y.reshape(-1).astype(np.float32))
+            kept_base_idxs.append(i)
+
+            if correlation_id and (i + 1) % 500 == 0:
+                self.publish(
+                    topic_type="train",
+                    kind="event",
+                    payload={
+                        "event": "window_build_progress",
+                        "stage": progress_label,
+                        "seen": int(i + 1),
+                        "kept": int(len(XH)),
+                        "skipped": int(skipped),
+                        "max_windows": int(take),
+                    },
+                    correlation_id=correlation_id,
+                )
+
+        if not XH:
+            raise ValueError("No usable windows found (targets may be missing/NaN for chosen split/window config).")
+
+        xh = np.stack(XH, axis=0)
+        xf = np.stack(XF, axis=0)
+        y = np.stack(Y, axis=0)
+        if return_base_indices:
+            return xh, xf, y, kept_base_idxs
+        return xh, xf, y
 
     def _inverse_targets_if_possible(self, scaler_obj: Any, y_scaled: np.ndarray) -> np.ndarray:
         """
@@ -339,9 +436,11 @@ class ModelDeveloperAgent(BaseAgent):
         stride = int(payload["window"]["stride"])
 
         max_train = int(payload["training"].get("max_train_windows", 20000))
+        max_val = int(payload["training"].get("max_val_windows", 0))
         max_test = int(payload["training"].get("max_test_windows", 5000))
 
         df_train = self._load_df(paths["train_scaled"])
+        df_val = self._load_df(paths["val_scaled"])
         df_test = self._load_df(paths["test_scaled"])
 
         scaler_obj = joblib.load(paths["scaler"])
@@ -360,60 +459,235 @@ class ModelDeveloperAgent(BaseAgent):
             correlation_id=corr_id,
         )
 
-        X_train, y_train = self._build_xy_from_windows(
-            df_train,
-            hist_cols=cols["hist_cols"],
-            future_cols=cols["future_cols"],
-            target_cols=cols["target_cols"],
-            W=W,
-            H=H,
-            stride=stride,
-            max_windows=max_train,
-            require_finite_targets=True,
-            progress_label="train",
-            correlation_id=corr_id,
-        )
-        # Also keep base window indices so we can reconstruct forecast timestamps in predictions parquet.
-        X_test, y_test, test_base_idxs = self._build_xy_from_windows(
-            df_test,
-            hist_cols=cols["hist_cols"],
-            future_cols=cols["future_cols"],
-            target_cols=cols["target_cols"],
-            W=W,
-            H=H,
-            stride=stride,
-            max_windows=max_test,
-            require_finite_targets=True,
-            progress_label="test",
-            correlation_id=corr_id,
-            return_base_indices=True,
-        )
+        mt = str(model_type or "").lower()
 
-        model = self._make_model(model_type, hyperparams)
-        self.publish(
-            topic_type="train",
-            kind="event",
-            payload={"event": "model_fit_started", "track": track, "model_type": model_type, "x_shape": list(X_train.shape)},
-            correlation_id=corr_id,
-        )
-        model.fit(X_train, y_train)
-        self.publish(
-            topic_type="train",
-            kind="event",
-            payload={"event": "model_fit_complete", "track": track, "model_type": model_type},
-            correlation_id=corr_id,
-        )
+        use_val_for_metrics = bool((payload.get("optuna", {}) or {}).get("enabled")) or bool((payload.get("hpo", {}) or {}).get("enabled"))
 
-        y_pred = model.predict(X_test)
+        if mt in ("lstm", "gru", "cnn"):
+            xh_tr, xf_tr, y_train = self._build_xy_seq_from_windows(
+                df_train,
+                hist_cols=cols["hist_cols"],
+                future_cols=cols["future_cols"],
+                target_cols=cols["target_cols"],
+                W=W,
+                H=H,
+                stride=stride,
+                max_windows=max_train,
+                require_finite_targets=True,
+                progress_label="train",
+                correlation_id=corr_id,
+            )
+            xh_va, xf_va, y_val = self._build_xy_seq_from_windows(
+                df_val,
+                hist_cols=cols["hist_cols"],
+                future_cols=cols["future_cols"],
+                target_cols=cols["target_cols"],
+                W=W,
+                H=H,
+                stride=stride,
+                max_windows=max_val,
+                require_finite_targets=True,
+                progress_label="val",
+                correlation_id=corr_id,
+            )
+            xh_te, xf_te, y_test, test_base_idxs = self._build_xy_seq_from_windows(
+                df_test,
+                hist_cols=cols["hist_cols"],
+                future_cols=cols["future_cols"],
+                target_cols=cols["target_cols"],
+                W=W,
+                H=H,
+                stride=stride,
+                max_windows=max_test,
+                require_finite_targets=True,
+                progress_label="test",
+                correlation_id=corr_id,
+                return_base_indices=True,
+            )
+        else:
+            X_train, y_train = self._build_xy_from_windows(
+                df_train,
+                hist_cols=cols["hist_cols"],
+                future_cols=cols["future_cols"],
+                target_cols=cols["target_cols"],
+                W=W,
+                H=H,
+                stride=stride,
+                max_windows=max_train,
+                require_finite_targets=True,
+                progress_label="train",
+                correlation_id=corr_id,
+            )
+            X_val, y_val = self._build_xy_from_windows(
+                df_val,
+                hist_cols=cols["hist_cols"],
+                future_cols=cols["future_cols"],
+                target_cols=cols["target_cols"],
+                W=W,
+                H=H,
+                stride=stride,
+                max_windows=max_val,
+                require_finite_targets=True,
+                progress_label="val",
+                correlation_id=corr_id,
+            )
+            # Also keep base window indices so we can reconstruct forecast timestamps in predictions parquet.
+            X_test, y_test, test_base_idxs = self._build_xy_from_windows(
+                df_test,
+                hist_cols=cols["hist_cols"],
+                future_cols=cols["future_cols"],
+                target_cols=cols["target_cols"],
+                W=W,
+                H=H,
+                stride=stride,
+                max_windows=max_test,
+                require_finite_targets=True,
+                progress_label="test",
+                correlation_id=corr_id,
+                return_base_indices=True,
+            )
+
+        # sklearn baselines
+        if mt in ("linear", "svr", "xgboost"):
+            model = self._make_model(model_type, hyperparams)
+            self.publish(
+                topic_type="train",
+                kind="event",
+                payload={"event": "model_fit_started", "track": track, "model_type": model_type, "x_shape": list(X_train.shape)},
+                correlation_id=corr_id,
+            )
+            model.fit(X_train, y_train)
+            self.publish(
+                topic_type="train",
+                kind="event",
+                payload={"event": "model_fit_complete", "track": track, "model_type": model_type},
+                correlation_id=corr_id,
+            )
+            y_pred = model.predict(X_test)
+
+            if use_val_for_metrics:
+                y_eval_pred = model.predict(X_val)
+                y_eval_true = y_val
+            else:
+                y_eval_pred = y_pred
+                y_eval_true = y_test
+
+            y_eval_true_inv = self._inverse_targets_if_possible(scaler_obj, y_eval_true)
+            y_eval_pred_inv = self._inverse_targets_if_possible(scaler_obj, y_eval_pred)
+
+        # torch baselines (Table II: MLP/LSTM/GRU/CNN)
+        elif mt in ("mlp", "lstm", "gru", "cnn"):
+            epochs = int(payload["training"].get("baseline_epochs", 20))
+            batch_size = int(payload["training"].get("baseline_batch_size", 256))
+            patience = int(payload["training"].get("baseline_patience", 3))
+            lr = float(hyperparams.get("learning_rate", 1e-3))
+            tcfg = TorchTrainConfig(epochs=epochs, batch_size=batch_size, lr=lr, patience=patience)
+
+            if mt == "mlp":
+                hl = int(hyperparams.get("hidden_layers", 2))
+                hs = int(hyperparams.get("hidden_size", 64))
+                dr = float(hyperparams.get("dropout", 0.1))
+                torch_model = MLPBaseline(input_dim=int(X_train.shape[1]), output_dim=int(y_train.shape[1]), hidden_layers=hl, hidden_size=hs, dropout=dr)
+                self.publish(
+                    topic_type="train",
+                    kind="event",
+                    payload={"event": "model_fit_started", "track": track, "model_type": model_type, "x_shape": list(X_train.shape)},
+                    correlation_id=corr_id,
+                )
+                torch_model, _best_val, _last_train = train_torch_regressor(
+                    model=torch_model,
+                    x_train=to_tensor(X_train),
+                    y_train=to_tensor(y_train),
+                    x_val=to_tensor(X_val),
+                    y_val=to_tensor(y_val),
+                    cfg=tcfg,
+                )
+                torch_model = torch_model.to(torch.device("cpu"))
+                torch_model.eval()
+                self.publish(topic_type="train", kind="event", payload={"event": "model_fit_complete", "track": track, "model_type": model_type}, correlation_id=corr_id)
+                with torch.no_grad():
+                    y_pred = torch_model(to_tensor(X_test)).cpu().numpy()
+                    if use_val_for_metrics:
+                        y_eval_pred = torch_model(to_tensor(X_val)).cpu().numpy()
+                        y_eval_true = y_val
+                    else:
+                        y_eval_pred = y_pred
+                        y_eval_true = y_test
+                y_eval_true_inv = self._inverse_targets_if_possible(scaler_obj, y_eval_true)
+                y_eval_pred_inv = self._inverse_targets_if_possible(scaler_obj, y_eval_pred)
+                model = torch_model
+            else:
+                layers = int(hyperparams.get("layers", 1))
+                hidden_size = int(hyperparams.get("hidden_size", 64))
+                fc_size = int(hyperparams.get("fc_size", 64))
+                if mt in ("lstm", "gru"):
+                    torch_model = RNNBaseline(
+                        cell=mt,
+                        hist_dim=int(xh_tr.shape[2]),
+                        fut_dim=int(xf_tr.shape[1]),
+                        hidden_size=hidden_size,
+                        layers=layers,
+                        fc_size=fc_size,
+                        output_dim=int(y_train.shape[1]),
+                    )
+                else:
+                    filters = int(hyperparams.get("filters", 32))
+                    kernel_size = int(hyperparams.get("kernel_size", 3))
+                    torch_model = CNNBaseline(
+                        hist_dim=int(xh_tr.shape[2]),
+                        fut_dim=int(xf_tr.shape[1]),
+                        filters=filters,
+                        kernel_size=kernel_size,
+                        layers=layers,
+                        fc_size=fc_size,
+                        output_dim=int(y_train.shape[1]),
+                    )
+                self.publish(
+                    topic_type="train",
+                    kind="event",
+                    payload={"event": "model_fit_started", "track": track, "model_type": model_type, "x_shape": [int(xh_tr.shape[0]), int(xh_tr.shape[1]), int(xh_tr.shape[2])]},
+                    correlation_id=corr_id,
+                )
+                torch_model, _best_val, _last_train = train_torch_seq_regressor(
+                    model=torch_model,
+                    x_hist_train=to_tensor(xh_tr),
+                    x_fut_train=to_tensor(xf_tr),
+                    y_train=to_tensor(y_train),
+                    x_hist_val=to_tensor(xh_va),
+                    x_fut_val=to_tensor(xf_va),
+                    y_val=to_tensor(y_val),
+                    cfg=tcfg,
+                )
+                torch_model = torch_model.to(torch.device("cpu"))
+                torch_model.eval()
+                self.publish(topic_type="train", kind="event", payload={"event": "model_fit_complete", "track": track, "model_type": model_type}, correlation_id=corr_id)
+                with torch.no_grad():
+                    y_pred = torch_model(to_tensor(xh_te), to_tensor(xf_te)).cpu().numpy()
+                    if use_val_for_metrics:
+                        y_eval_pred = torch_model(to_tensor(xh_va), to_tensor(xf_va)).cpu().numpy()
+                        y_eval_true = y_val
+                    else:
+                        y_eval_pred = y_pred
+                        y_eval_true = y_test
+                y_eval_true_inv = self._inverse_targets_if_possible(scaler_obj, y_eval_true)
+                y_eval_pred_inv = self._inverse_targets_if_possible(scaler_obj, y_eval_pred)
+                model = torch_model
+
+        else:
+            raise ValueError(f"Unsupported model_type: {model_type}")
 
         y_test_inv = self._inverse_targets_if_possible(scaler_obj, y_test)
         y_pred_inv = self._inverse_targets_if_possible(scaler_obj, y_pred)
 
         model_path = out_dir / "models" / f"{track}_{model_type}.joblib"
-        joblib.dump(model, model_path)
+        # Persist sklearn models directly; torch models as state_dict + minimal metadata.
+        if mt in ("mlp", "lstm", "gru", "cnn"):
+            torch.save({"model_type": mt, "hyperparams": dict(hyperparams), "state_dict": model.state_dict()}, model_path.as_posix())
+        else:
+            joblib.dump(model, model_path)
 
         plot_path = out_dir / "plots" / f"{track}_{model_type}_pred_vs_actual.png"
-        metrics = self._evaluate_and_plot(y_true=y_test_inv, y_pred=y_pred_inv, plot_path=plot_path)
+        metrics = self._evaluate_and_plot(y_true=y_eval_true_inv, y_pred=y_eval_pred_inv, plot_path=plot_path)
 
         # Write baseline predictions parquet for Phase C3 integration/plots.
         dy = len(cols.get("target_cols") or ["y"])
@@ -801,7 +1075,7 @@ class ModelDeveloperAgent(BaseAgent):
                 # In Phase C research mode, `train` is a high-level plan message that is
                 # converted into `train_execute` by specialized forecasting agents.
                 # Only baseline model types should be executed directly here.
-                if model_type not in ("linear", "xgboost"):
+                if str(model_type or "").lower() not in ("linear", "svr", "mlp", "lstm", "gru", "cnn", "xgboost"):
                     continue
                 try:
                     payload = dict(msg.payload)

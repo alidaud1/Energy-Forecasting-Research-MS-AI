@@ -10,10 +10,12 @@ from .base_agent import BaseAgent, AgentConfig
 class RunConfig:
     manifest_path: str
     track: str  # "load" | "solar"
-    model_type: str  # "linear" | "xgboost"
+    model_type: str  # "linear" | "svr" | "mlp" | "lstm" | "gru" | "cnn" | "xgboost"
     window: dict  # {"W": 168, "H": 24, "stride": 24}
     training: dict  # {"max_train_windows": 20000, "max_test_windows": 5000, "seed": 42}
     hpo: dict  # {"enabled": False, "n_trials": 1, ...}
+    # Table III feature-group configuration (optional, defaults to "use what's in Phase A artifacts").
+    feature_search: dict | None = None
 
 
 class TaskManagerAgent(BaseAgent):
@@ -42,6 +44,7 @@ class TaskManagerAgent(BaseAgent):
             "window": self.run_cfg.window,
             "training": self.run_cfg.training,
             "hpo": self.run_cfg.hpo,
+            "feature_search": self.run_cfg.feature_search or {},
         }
 
         self.publish(
@@ -62,4 +65,3 @@ class TaskManagerAgent(BaseAgent):
             },
             correlation_id=corr_id,
         )
-
