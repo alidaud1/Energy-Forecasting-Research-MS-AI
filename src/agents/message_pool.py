@@ -9,6 +9,11 @@ from typing import Dict, Iterable, List, Optional, Set
 from .messages import Message, TopicId
 
 
+# Process-wide lock to prevent concurrent JSONL writes from multiple MessagePool instances
+# (e.g., multiple runs in the WorkbenchEngine) corrupting logs/message_pool.jsonl.
+_JSONL_WRITE_LOCK = threading.Lock()
+
+
 @dataclass
 class Subscription:
     agent_id: str
@@ -96,8 +101,49 @@ class MessagePool:
 
     def _append_jsonl(self, msg: Message) -> None:
         record = msg.to_dict()
-        with self.log_path.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        # Multiple MessagePool instances may share the same log_path; guard the append
+        # with a global lock to keep each JSON object on a single line.
+        with _JSONL_WRITE_LOCK:
+            with self.log_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def cursor_from_seq(self, after_seq: int) -> int:
+        """
+        Translate an SSE/WS last_seq into an internal list cursor index.
+        Optimized for the common case where after_seq is near the end.
+        """
+        with self._lock:
+            if after_seq < 0:
+                return 0
+            i = len(self._messages) - 1
+            while i >= 0 and int(self._messages[i].seq) > int(after_seq):
+                i -= 1
+            return i + 1
+
+    def read_from_cursor(
+        self,
+        cursor: int,
+        *,
+        run_id: Optional[str] = None,
+        max_messages: int = 500,
+    ) -> tuple[List[Message], int]:
+        """
+        Cursor-based read for API streaming (SSE/WS).
+        Returns (messages, new_cursor). The cursor is an index into the internal message list.
+        """
+        with self._lock:
+            start = max(0, int(cursor))
+            end = len(self._messages)
+            out: List[Message] = []
+            i = start
+            while i < end:
+                m = self._messages[i]
+                if run_id is None or str(m.run_id or "") == str(run_id):
+                    out.append(m)
+                    if len(out) >= int(max_messages):
+                        return out, i + 1
+                i += 1
+            return out, end
 
     def poll(self, agent_id: str, *, max_messages: int = 50) -> List[Message]:
         with self._lock:
@@ -159,4 +205,3 @@ class MessagePool:
                     continue
                 out.append(m)
             return out
-

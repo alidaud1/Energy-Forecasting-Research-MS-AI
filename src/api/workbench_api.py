@@ -122,13 +122,12 @@ async def events(run_id: str, last_seq: int = -1):
 
     async def gen():
         nonlocal last_seq
+        cursor = rt.pool.cursor_from_seq(int(last_seq))
         while True:
-            msgs = [m.to_dict() for m in rt.pool.get_all()]
-            new = [m for m in msgs if m.get("run_id") == run_id and int(m.get("seq", -1)) > int(last_seq)]
-            new.sort(key=lambda x: int(x.get("seq", -1)))
-            for m in new:
-                last_seq = int(m.get("seq", last_seq))
-                payload = json.dumps(m, ensure_ascii=False, default=str)
+            msgs, cursor = rt.pool.read_from_cursor(cursor, run_id=run_id, max_messages=1000)
+            for m in msgs:
+                last_seq = int(m.seq)
+                payload = json.dumps(m.to_dict(), ensure_ascii=False, default=str)
                 yield f"data: {payload}\n\n"
             await asyncio.sleep(0.5)
 
@@ -155,14 +154,13 @@ async def ws(ws: WebSocket, run_id: str = Query(...), last_seq: int = Query(-1))
 
     await ws_manager.connect(ws)
     try:
+        cursor = rt.pool.cursor_from_seq(int(last_seq))
         while True:
             # Send any new messages
-            msgs = [m.to_dict() for m in rt.pool.get_all()]
-            new = [m for m in msgs if m.get("run_id") == run_id and int(m.get("seq", -1)) > int(last_seq)]
-            new.sort(key=lambda x: int(x.get("seq", -1)))
-            for m in new:
-                last_seq = int(m.get("seq", last_seq))
-                await ws.send_text(json.dumps({"type": "message", "data": m}, ensure_ascii=False, default=str))
+            new_msgs, cursor = rt.pool.read_from_cursor(cursor, run_id=run_id, max_messages=1000)
+            for m in new_msgs:
+                last_seq = int(m.seq)
+                await ws.send_text(json.dumps({"type": "message", "data": m.to_dict()}, ensure_ascii=False, default=str))
 
             # Receive optional client commands without blocking too long
             try:

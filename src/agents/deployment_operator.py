@@ -148,12 +148,26 @@ class DeploymentOperatorAgent(BaseAgent):
                 except Exception:
                     pass
 
-        action = str(adj.get("action") or "")
+        action = str(adj.get("action") or "").lower()
+        if action not in ("scale", "bias", "accept", "reject", ""):
+            raise ValueError(f"Invalid deployment action: {action!r}. Expected scale|bias|accept|reject.")
+
         if action == "scale":
-            factor = float(adj.get("factor"))
+            try:
+                factor = float(adj.get("factor"))
+            except Exception as e:
+                raise ValueError(f"Invalid scale factor: {adj.get('factor')!r}") from e
+            if not np.isfinite(factor):
+                raise ValueError(f"Invalid scale factor (not finite): {factor}")
             out.loc[mask, "y_pred"] = out.loc[mask, "y_pred"] * factor
+
         elif action == "bias":
-            add = float(adj.get("add"))
+            try:
+                add = float(adj.get("add"))
+            except Exception as e:
+                raise ValueError(f"Invalid bias add value: {adj.get('add')!r}") from e
+            if not np.isfinite(add):
+                raise ValueError(f"Invalid bias add value (not finite): {add}")
             out.loc[mask, "y_pred"] = out.loc[mask, "y_pred"] + add
         else:
             # accept/reject/unknown -> no change

@@ -22,6 +22,7 @@ export default function App() {
   const [status, setStatus] = React.useState<string>("");
   const [messages, setMessages] = React.useState<PoolMessage[]>([]);
   const [tab, setTab] = React.useState<"workbench" | "agent_flow">("workbench");
+  const [useLlm, setUseLlm] = React.useState<boolean>(false);
 
   const [gateOpen, setGateOpen] = React.useState(false);
   const [gateStage, setGateStage] = React.useState("");
@@ -128,7 +129,7 @@ export default function App() {
       patience: 2,
       load_model: "patchtst",
       solar_model: "patchtst",
-      use_llm: false
+      use_llm: useLlm
     });
     setRunId(r.run_id);
     setStatus("running");
@@ -204,6 +205,10 @@ export default function App() {
       <header className="px-4 py-3 bg-ieeeBlue border-b border-neutral-200 flex items-center justify-between">
         <div className="font-bold">Unified Agent Workbench</div>
         <div className="flex items-center gap-2">
+          <label className="flex items-center gap-2 text-sm px-2 py-1.5 rounded-md bg-white/70 hover:bg-white">
+            <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)} />
+            use LLM
+          </label>
           <button
             onClick={() => setTab("workbench")}
             className={`text-sm px-3 py-1.5 rounded-md ${tab === "workbench" ? "bg-white font-semibold" : "bg-white/70 hover:bg-white"}`}

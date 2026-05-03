@@ -45,6 +45,10 @@ pip install websockets
 pip install wsproto
 ```
 
+### Streaming Performance Note (Important)
+
+The backend streams agent messages using a **cursor-based** approach (it does not rescan the entire message history on every tick). This keeps the UI responsive even for long runs with many messages.
+
 ## 2) Big Picture: How Human-in-the-Loop Works
 
 The system runs in **stages** with **gates** (checkpoints). When a gate is open, the backend is waiting for you to reply.
@@ -61,6 +65,8 @@ You interact in two ways:
 2. **Chat / Feedback box** (always available)
 
 Your message goes into the backend as `user_feedback/<run_id>`, then the Task Manager translates it into structured actions, and agents proceed.
+
+If you type an invalid post-process command (for example `scale load factor=abc`), the deployment step will **reject it** and publish a `deploy:error` message instead of producing a broken forecast artifact.
 
 ## 3) Frontend Controls (Every Option)
 
@@ -171,6 +177,10 @@ Fetches fresh chart data from the backend.
 Backend endpoint used:
 - `/api/runs/<run_id>/predictions?track=load|solar&variant=...&horizon=...`
 
+### E2) Catching Up After Refresh (`last_seq`)
+
+The frontend keeps track of the last message sequence it has rendered (`last_seq`). If you refresh the tab, the frontend reconnects with the latest `last_seq` so it can **catch up** on missed messages without duplicating older ones.
+
 ### F) Charts (Load + Solar)
 
 Each chart shows:
@@ -199,6 +209,14 @@ The UI fetches:
 `http://127.0.0.1:8000/static/runs/<run_id>/reports/joint_decision_report.md`
 
 The UI also scans the markdown for `Plot: ` paths and displays PNG plots automatically.
+
+### G2) Optional SSE Stream (Debug / Fallback)
+
+If WebSockets are blocked in your environment, you can still stream messages via Server-Sent Events:
+
+`GET /api/runs/<run_id>/events?last_seq=-1`
+
+The React app uses WebSockets by default, but this SSE endpoint is useful for debugging with a browser or curl.
 
 ### H) Chat / Feedback (Bottom Right Panel)
 
@@ -238,6 +256,10 @@ Use:
 - `scale solar hours=12-16 factor=0.85`
 - `bias load add=10`
 - `bias solar add=-0.1`
+- (optional triggers) `scale load factor=1.05 theta=5000`
+- (optional triggers) `scale solar factor=0.90 phi_col=VAR169 phi_theta=200`
+
+If you send a command with invalid numbers (NaN/inf/non-numeric), the deployment operator will publish `deploy:error` and **will not** write adjusted predictions.
 
 ## 5) What You Should Expect To See (Normal Flow)
 
@@ -269,8 +291,14 @@ Most common causes:
 - WebSocket not connected (no live messages)
 - baseline overlay enabled but baselines were disabled
 - variant overlay enabled but you did not create both branches
+- you selected a `variant` that does not exist for this run (try “best available”)
 
 ### Net-load not computed
 Your load dataset (Task 1) and solar dataset (Task 15) do not overlap in time in this setup.
 So net-load overlay is not available unless you prepare matched tasks/timelines.
 
+### “I don’t see progress, it looks stuck”
+Typical reasons:
+- Transformers and XGBoost can take minutes on CPU-only systems.
+- Watch the Live Log Console: if `seq` keeps increasing, training is still running.
+- If the run times out, increase backend timeout (CLI) or reduce training settings (epochs, max windows).
