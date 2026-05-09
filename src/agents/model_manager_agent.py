@@ -258,9 +258,10 @@ class ModelManagerAgent(BaseAgent):
         # Ask trials (batched).
         for _ in range(int(batch_size)):
             trial_params = self._sample_params_optuna(str(plan_template.get("model_type") or "xgboost"), dict(plan_template.get("hyperparams", {}) or {}))
-            trial_number = int(self.hpo_state.current_trial_number or -1)
-            if trial_number < 0:
+            # Trial number can be 0 for the first trial; do not treat it as falsy.
+            if self.hpo_state.current_trial_number is None:
                 continue
+            trial_number = int(self.hpo_state.current_trial_number)
             self._asked_trials[trial_number] = self._trial  # type: ignore[assignment]
             self._batch_trials.append(trial_number)
             plan = dict(plan_template)
@@ -326,10 +327,12 @@ class ModelManagerAgent(BaseAgent):
                     "hpo_enabled": bool(self.hpo_state.enabled) if self.hpo_state else False,
                     "completed_trials": int(self.hpo_state.completed) if self.hpo_state else 0,
                 }
-                if self._study is not None and self._study.best_trial is not None:
+                # Optuna raises ValueError when no trials are complete yet; treat as "no best so far".
+                if self._study is not None:
                     try:
+                        _bt = self._study.best_trial  # may raise if no completed trials
                         obs["best_value"] = float(self._study.best_value)
-                        obs["best_trial"] = int(self._study.best_trial.number)
+                        obs["best_trial"] = int(_bt.number)
                     except Exception:
                         pass
                 self.publish(topic_type="observation", kind="event", payload=obs)

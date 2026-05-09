@@ -5,8 +5,10 @@ import LogConsole from "./components/LogConsole";
 import ForecastChart from "./components/ForecastChart";
 import AgentFlowDiagram from "./components/AgentFlowDiagram";
 import VisualizationPanel from "./components/VisualizationPanel";
+import ExperimentSetupTab from "./components/ExperimentSetupTab";
 import { getJson, postJson, staticUrl, wsBase } from "./api";
 import { PredictionsResponse, PoolMessage, WsEnvelope } from "./types";
+import { useExperimentStore } from "./experimentStore";
 
 type RunsResponse = { runs: { run_id: string; status: string }[] };
 type StartResp = { run_id: string };
@@ -21,8 +23,8 @@ export default function App() {
   const [runId, setRunId] = React.useState<string>("");
   const [status, setStatus] = React.useState<string>("");
   const [messages, setMessages] = React.useState<PoolMessage[]>([]);
-  const [tab, setTab] = React.useState<"workbench" | "agent_flow">("workbench");
-  const [useLlm, setUseLlm] = React.useState<boolean>(false);
+  const [tab, setTab] = React.useState<"workbench" | "agent_flow" | "experiment">("workbench");
+  const [expCfg, setExpCfg] = useExperimentStore();
 
   const [gateOpen, setGateOpen] = React.useState(false);
   const [gateStage, setGateStage] = React.useState("");
@@ -129,11 +131,57 @@ export default function App() {
       patience: 2,
       load_model: "patchtst",
       solar_model: "patchtst",
-      use_llm: useLlm
+      use_llm: false
     });
     setRunId(r.run_id);
     setStatus("running");
     connectWs(r.run_id);
+  }
+
+  function validateExperiment() {
+    if (!expCfg.tracks.length) return "Select at least one track (load or solar).";
+    if (!expCfg.models.length) return "Select at least one model family.";
+    return "";
+  }
+
+  async function startMasterRun() {
+    const err = validateExperiment();
+    if (err) return;
+    // Minimal backend-compatible payload (we extend backend schema to accept the extra fields).
+    const payload: any = {
+      manifest: "data/processed/dataset_manifest.json",
+      W: expCfg.W,
+      H: expCfg.H,
+      stride: expCfg.stride,
+      with_baselines: expCfg.with_baselines,
+      max_train_windows: expCfg.max_train_windows,
+      max_test_windows: expCfg.max_test_windows,
+      seed: expCfg.seed,
+      epochs: expCfg.epochs,
+      batch_size: expCfg.batch_size,
+      lr: expCfg.lr,
+      patience: expCfg.patience,
+      load_model: expCfg.models.includes("itransformer") ? "itransformer" : "patchtst",
+      solar_model: expCfg.models.includes("itransformer") ? "itransformer" : "patchtst",
+      use_llm: expCfg.use_llm,
+      interactive: expCfg.interactive,
+      tracks: expCfg.tracks,
+      models: expCfg.models,
+      description: expCfg.description,
+      hpo: {
+        enabled: expCfg.enable_hpo,
+        track: expCfg.hpo_track,
+        n_trials: expCfg.n_trials,
+        init_batch_K: expCfg.init_batch_K,
+        batch_B: expCfg.batch_B,
+        constant_liar: expCfg.constant_liar,
+      },
+    };
+    const r = await postJson<StartResp>("/api/runs/start", payload);
+    setRunId(r.run_id);
+    setStatus("running");
+    connectWs(r.run_id);
+    setTab("workbench");
   }
 
   function mergeForChart(primary?: PredictionsResponse, secondary?: PredictionsResponse, third?: PredictionsResponse) {
@@ -205,10 +253,12 @@ export default function App() {
       <header className="px-4 py-3 bg-ieeeBlue border-b border-neutral-200 flex items-center justify-between">
         <div className="font-bold">Unified Agent Workbench</div>
         <div className="flex items-center gap-2">
-          <label className="flex items-center gap-2 text-sm px-2 py-1.5 rounded-md bg-white/70 hover:bg-white">
-            <input type="checkbox" checked={useLlm} onChange={(e) => setUseLlm(e.target.checked)} />
-            use LLM
-          </label>
+          <button
+            onClick={() => setTab("experiment")}
+            className={`text-sm px-3 py-1.5 rounded-md ${tab === "experiment" ? "bg-white font-semibold" : "bg-white/70 hover:bg-white"}`}
+          >
+            Experiment Setup
+          </button>
           <button
             onClick={() => setTab("workbench")}
             className={`text-sm px-3 py-1.5 rounded-md ${tab === "workbench" ? "bg-white font-semibold" : "bg-white/70 hover:bg-white"}`}
@@ -268,13 +318,21 @@ export default function App() {
         </section>
 
         <section className="col-span-12 lg:col-span-9 space-y-4">
-          {tab === "agent_flow" ? (
+          {tab === "experiment" ? (
+            <ExperimentSetupTab
+              cfg={expCfg}
+              setCfg={setExpCfg}
+              onStart={() => startMasterRun().catch(() => {})}
+              startDisabled={!!validateExperiment()}
+              startError={validateExperiment()}
+            />
+          ) : tab === "agent_flow" ? (
             <AgentFlowDiagram runId={runId} />
           ) : (
             <>
-          <div className="rounded-xl border border-neutral-200 overflow-hidden">
-            <div className="px-3 py-2 bg-neutral-50 text-sm font-semibold">View Controls</div>
-            <div className="p-3 flex flex-wrap gap-3 items-end">
+              <div className="rounded-xl border border-neutral-200 overflow-hidden">
+                <div className="px-3 py-2 bg-neutral-50 text-sm font-semibold">View Controls</div>
+                <div className="p-3 flex flex-wrap gap-3 items-end">
               <div>
                 <div className="text-xs text-neutral-600 mb-1">variant</div>
                 <select className="border border-neutral-300 rounded-md px-2 py-2 text-sm" value={variant} onChange={(e) => setVariant(e.target.value)}>

@@ -60,23 +60,52 @@ def runs() -> Dict[str, Any]:
 
 @app.post("/api/runs/start", response_model=RunStartResponse)
 def start(req: RunStartRequest) -> RunStartResponse:
-    run_id = engine.start_research_interactive(
-        manifest=req.manifest,
-        W=req.W,
-        H=req.H,
-        stride=req.stride,
-        with_baselines=req.with_baselines,
-        max_train_windows=req.max_train_windows,
-        max_test_windows=req.max_test_windows,
-        seed=req.seed,
-        epochs=req.epochs,
-        batch_size=req.batch_size,
-        lr=req.lr,
-        patience=req.patience,
-        load_model=req.load_model,
-        solar_model=req.solar_model,
-        use_llm=req.use_llm,
-    )
+    # Phase E5: if experiment fields are provided, start a master run. Otherwise keep legacy behavior.
+    models = list(getattr(req, "models", []) or [])
+    tracks = list(getattr(req, "tracks", []) or [])
+    description = str(getattr(req, "description", "") or "")
+    interactive = bool(getattr(req, "interactive", True))
+
+    if models or description or (tracks and tracks != ["load", "solar"]) or (interactive is False):
+        run_id = engine.start_master_run(
+            manifest=req.manifest,
+            description=description,
+            tracks=tracks or ["load", "solar"],
+            models=models,
+            W=req.W,
+            H=req.H,
+            stride=req.stride,
+            with_baselines=req.with_baselines,
+            max_train_windows=req.max_train_windows,
+            max_test_windows=req.max_test_windows,
+            seed=req.seed,
+            epochs=req.epochs,
+            batch_size=req.batch_size,
+            lr=req.lr,
+            patience=req.patience,
+            load_model=req.load_model,
+            solar_model=req.solar_model,
+            use_llm=req.use_llm,
+            interactive=interactive,
+        )
+    else:
+        run_id = engine.start_research_interactive(
+            manifest=req.manifest,
+            W=req.W,
+            H=req.H,
+            stride=req.stride,
+            with_baselines=req.with_baselines,
+            max_train_windows=req.max_train_windows,
+            max_test_windows=req.max_test_windows,
+            seed=req.seed,
+            epochs=req.epochs,
+            batch_size=req.batch_size,
+            lr=req.lr,
+            patience=req.patience,
+            load_model=req.load_model,
+            solar_model=req.solar_model,
+            use_llm=req.use_llm,
+        )
     return RunStartResponse(run_id=run_id)
 
 

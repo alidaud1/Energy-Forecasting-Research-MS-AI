@@ -3,6 +3,15 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class HpoConfig(BaseModel):
+    enabled: bool = False
+    track: str = Field(default="load", pattern="^(load|solar)$")
+    n_trials: int = 10
+    init_batch_K: int = 2
+    batch_B: int = 2
+    constant_liar: bool = True
+
+
 class RunStartRequest(BaseModel):
     manifest: str = Field(default="data/processed/dataset_manifest.json")
     W: int = 168
@@ -23,6 +32,13 @@ class RunStartRequest(BaseModel):
 
     # Phase E3: enable LLM-backed Task Manager translation (requires OPENAI_API_KEY).
     use_llm: bool = False
+
+    # Phase E5: experiment setup (optional)
+    interactive: bool = True
+    description: str = ""
+    tracks: list[str] = Field(default_factory=lambda: ["load", "solar"])
+    models: list[str] = Field(default_factory=list)
+    hpo: HpoConfig = Field(default_factory=HpoConfig)
 
 
 class RunStartResponse(BaseModel):

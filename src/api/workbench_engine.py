@@ -163,6 +163,162 @@ class WorkbenchEngine:
         th.start()
         return run_id
 
+    def start_master_run(
+        self,
+        *,
+        manifest: str,
+        description: str,
+        tracks: list[str],
+        models: list[str],
+        W: int,
+        H: int,
+        stride: int,
+        with_baselines: bool,
+        max_train_windows: int,
+        max_test_windows: int,
+        seed: int,
+        epochs: int,
+        batch_size: int,
+        lr: float,
+        patience: int,
+        load_model: str,
+        solar_model: str,
+        use_llm: bool,
+        interactive: bool,
+        timeout_seconds: float = 7200.0,
+        tick_seconds: float = 1.0,
+        precheck: bool = True,
+    ) -> str:
+        """
+        Phase E5: Workbench-driven master run.
+        Uses the existing agent graph, but allows selecting tracks and baseline families.
+
+        Notes:
+        - HPO from the workbench UI is accepted by the API schema, but baseline-HPO execution
+          remains CLI-first in this repo version.
+        """
+        run_id = make_run_id()
+        if load_dotenv is not None:
+            load_dotenv(override=False)
+        pool = MessagePool(log_path=self.log_path, load_existing=True)
+
+        trks = [t for t in tracks if t in ("load", "solar")]
+        if not trks:
+            trks = ["load", "solar"]
+
+        # Baseline families requested by UI.
+        baseline_models = [m for m in (models or []) if m in ("linear", "svr", "mlp", "lstm", "gru", "cnn", "xgboost")]
+        if not baseline_models:
+            baseline_models = ["xgboost"]
+
+        if precheck:
+            ok, _report = run_phase_c_precheck(manifest=manifest, tracks=tuple(trks), check_fractional_weather=True)
+            if not ok:
+                raise RuntimeError("Phase C precheck failed. Fix data artifacts first.")
+
+        tm = InteractiveTaskManagerAgent(
+            AgentConfig(agent_id="InteractiveTaskManagerAgent", role="task_manager", run_id=run_id),
+            pool,
+            InteractiveResearchConfig(
+                manifest_path=manifest,
+                tracks=list(trks),
+                W=int(W),
+                H=int(H),
+                stride=int(stride),
+                with_baselines=bool(with_baselines),
+                baseline_models=list(baseline_models),
+                max_train_windows=int(max_train_windows),
+                max_test_windows=int(max_test_windows),
+                seed=int(seed),
+                load_model=str(load_model),
+                solar_model=str(solar_model),
+                use_llm=bool(use_llm),
+                epochs=int(epochs),
+                batch_size=int(batch_size),
+                lr=float(lr),
+                patience=int(patience),
+            ),
+        )
+        prep = PreparationAgent(AgentConfig(agent_id="PreparationAgent", role="preparation", run_id=run_id), pool)
+        load_agent = LoadForecastingAgent(AgentConfig(agent_id="LoadForecastingAgent", role="load_forecasting", run_id=run_id), pool)
+        solar_agent = SolarForecastingAgent(AgentConfig(agent_id="SolarForecastingAgent", role="solar_forecasting", run_id=run_id), pool)
+        dev = ModelDeveloperAgent(AgentConfig(agent_id="ModelDeveloperAgent", role="model_developer", run_id=run_id), pool)
+        deploy = DeploymentOperatorAgent(AgentConfig(agent_id="DeploymentOperatorAgent", role="deployment", run_id=run_id), pool)
+        integ = ForecastIntegrationAgent(AgentConfig(agent_id="ForecastIntegrationAgent", role="forecast_integration", run_id=run_id), pool)
+        agents = [tm, prep, load_agent, solar_agent, dev, deploy, integ]
+
+        rt = RunRuntime(run_id=run_id, pool=pool, agents=agents)
+
+        def loop() -> None:
+            start = time.time()
+            try:
+                auto_interactive = not bool(interactive)
+                while (time.time() - start) < float(timeout_seconds):
+                    for a in agents:
+                        a.tick()
+
+                    # Auto-approve gates when interactive is disabled.
+                    if auto_interactive:
+                        gate_msgs = pool.find_by_topic("gate", topic_source=run_id)
+                        for m in reversed(gate_msgs[-10:]):
+                            p = m.payload or {}
+                            if m.kind == "event" and p.get("event") == "gate_requested":
+                                gid = str(p.get("gate_id") or "")
+                                stage = str(p.get("stage") or "")
+                                # Gate id is stable in this implementation
+                                if gid == "postprocess_gate_v1":
+                                    text = "accept"
+                                else:
+                                    text = "approve"
+                                self.publish_user_feedback(run_id, text=text, gate_id=gid)
+                                break
+
+                    for topic_type in ("prepare", "train", "train_execute", "evaluate"):
+                        for m in pool.find_by_topic(topic_type, topic_source=run_id):
+                            if m.kind == "error":
+                                rt.status = "failed"
+                                rt.last_error = str((m.payload or {}).get("error") or m.payload)
+                                return
+
+                    integ_msgs = pool.find_by_topic("integrate", topic_source=run_id)
+                    if any(
+                        m.kind == "result" and (m.payload or {}).get("event") in ("joint_report_ready", "final_research_summary_ready")
+                        for m in integ_msgs
+                    ):
+                        rt.status = "completed"
+                        return
+
+                    time.sleep(float(tick_seconds))
+
+                rt.status = "failed"
+                rt.last_error = "timeout"
+            except Exception as e:
+                rt.status = "failed"
+                rt.last_error = str(e)
+
+        th = threading.Thread(target=loop, name=f"run_{run_id}", daemon=True)
+        rt.thread = th
+        with self._lock:
+            self._runs[run_id] = rt
+        th.start()
+
+        # Emit a lightweight run description for UI display / reporting (non-blocking).
+        try:
+            pool.publish(
+                Message.new(
+                    topic=TopicId("system", run_id),
+                    kind="event",
+                    sender="WorkbenchEngine",
+                    sender_role="system",
+                    payload={"event": "run_description", "description": str(description or "")[:500]},
+                    run_id=run_id,
+                )
+            )
+        except Exception:
+            pass
+
+        return run_id
+
     def publish_user_feedback(self, run_id: str, *, text: str, gate_id: str | None = None) -> None:
         rt = self.get(run_id)
         if not rt:

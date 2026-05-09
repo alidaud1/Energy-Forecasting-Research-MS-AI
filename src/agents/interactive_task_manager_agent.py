@@ -142,6 +142,9 @@ class InteractiveResearchConfig:
 
     # Baselines
     with_baselines: bool = True
+    # Which baseline families to execute when with_baselines is enabled.
+    # Supported: linear, svr, mlp, lstm, gru, cnn, xgboost
+    baseline_models: List[str] = field(default_factory=lambda: ["xgboost"])
     max_train_windows: int = 20000
     max_test_windows: int = 5000
     seed: int = 42
@@ -246,6 +249,7 @@ class InteractiveTaskManagerAgent(BaseAgent):
             "variant": "human_adjusted" if bool(self._plan_edited) else "proposed",
             "window": {"W": int(self.rcfg.W), "H": int(self.rcfg.H), "stride": int(self.rcfg.stride)},
             "with_baselines": bool(self.rcfg.with_baselines),
+            "baseline_models": [str(m) for m in (self.rcfg.baseline_models or [])],
             "baseline_limits": {"max_train_windows": int(self.rcfg.max_train_windows), "max_test_windows": int(self.rcfg.max_test_windows), "seed": int(self.rcfg.seed)},
             "transformers": {
                 "load_model": str(self.rcfg.load_model),
@@ -485,30 +489,35 @@ class InteractiveTaskManagerAgent(BaseAgent):
 
             # Baselines (direct to model developer)
             if bool(plan.get("with_baselines", True)):
+                baseline_models = [str(m).lower() for m in (plan.get("baseline_models") or ["xgboost"])]
+                # Ensure deterministic ordering for reproducibility.
+                ordered = [m for m in ["linear", "svr", "mlp", "lstm", "gru", "cnn", "xgboost"] if m in baseline_models]
                 for track in ("load", "solar"):
                     if track not in tracks:
                         continue
                     ready = self._ready_payloads[track]
-                    self.publish(
-                        topic_type="train",
-                        kind="command",
-                        payload={
-                            "command": "train",
-                            "track": track,
-                            "paths": ready["paths"],
-                            "columns": ready["columns"],
-                            "model_type": "xgboost",
-                            "hyperparams": dict(xgb_hp),
-                            "window": window,
-                            "training": base_training,
-                            "child_run_id": child_run_id,
-                            "parent_run_id": parent_run_id,
-                            "comparison_group_id": cmp_id,
-                            "variant": variant,
-                        },
-                        correlation_id=f"{self._corr_id}_baseline_{track}_{corr_suffix}",
-                        to_roles=["model_developer"],
-                    )
+                    for mt in ordered:
+                        hp = dict(xgb_hp) if mt == "xgboost" else {}
+                        self.publish(
+                            topic_type="train",
+                            kind="command",
+                            payload={
+                                "command": "train",
+                                "track": track,
+                                "paths": ready["paths"],
+                                "columns": ready["columns"],
+                                "model_type": mt,
+                                "hyperparams": hp,
+                                "window": window,
+                                "training": base_training,
+                                "child_run_id": child_run_id,
+                                "parent_run_id": parent_run_id,
+                                "comparison_group_id": cmp_id,
+                                "variant": variant,
+                            },
+                            correlation_id=f"{self._corr_id}_baseline_{track}_{mt}_{corr_suffix}",
+                            to_roles=["model_developer"],
+                        )
 
             # Transformer plans (forecasting agents -> train_execute)
             if "load" in tracks:
