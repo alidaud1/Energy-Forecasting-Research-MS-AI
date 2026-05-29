@@ -1,0 +1,214 @@
+(venv) D:\Tests\02\coding_implementation\code_implementation>python scripts\run_load_all_tasks_baselines.py --tasks 1-15
+[RUN] task=01 model=linear
+[OK] run_id=run_20260520_173156 mae=41.8227 rmse=49.7680
+[RUN] task=01 model=svr
+[OK] run_id=run_20260520_173204 mae=43.0486 rmse=56.0352
+[RUN] task=01 model=mlp
+[OK] run_id=run_20260520_173510 mae=38.4631 rmse=49.0610
+[RUN] task=01 model=lstm
+[OK] run_id=run_20260520_173519 mae=40.3400 rmse=52.0734
+[RUN] task=01 model=gru
+[OK] run_id=run_20260520_173529 mae=41.2482 rmse=52.9339
+[RUN] task=01 model=cnn
+[OK] run_id=run_20260520_173543 mae=40.8426 rmse=53.0394
+[RUN] task=01 model=xgboost
+[OK] run_id=run_20260520_173552 mae=33.9441 rmse=43.5627
+[RUN] task=02 model=linear
+[OK] run_id=run_20260520_175919 mae=12.2015 rmse=13.8359
+[RUN] task=02 model=svr
+[OK] run_id=run_20260520_175926 mae=16.4187 rmse=19.0831
+[RUN] task=02 model=mlp
+[OK] run_id=run_20260520_175932 mae=7.1830 rmse=8.2178
+[RUN] task=02 model=lstm
+[OK] run_id=run_20260520_175941 mae=7.7408 rmse=9.5391
+[RUN] task=02 model=gru
+[OK] run_id=run_20260520_175949 mae=7.2962 rmse=8.9884
+[RUN] task=02 model=cnn
+[OK] run_id=run_20260520_175958 mae=9.4103 rmse=10.6369
+[RUN] task=02 model=xgboost
+[OK] run_id=run_20260520_180006 mae=19.4128 rmse=22.8031
+[RUN] task=03 model=linear
+[OK] run_id=run_20260520_180039 mae=21.0290 rmse=23.2290
+[RUN] task=03 model=svr
+[OK] run_id=run_20260520_180046 mae=15.2465 rmse=17.2646
+[RUN] task=03 model=mlp
+[OK] run_id=run_20260520_180053 mae=15.3514 rmse=17.6819
+[RUN] task=03 model=lstm
+[OK] run_id=run_20260520_180102 mae=13.5575 rmse=15.7895
+[RUN] task=03 model=gru
+[OK] run_id=run_20260520_180111 mae=13.4250 rmse=15.6978
+[RUN] task=03 model=cnn
+[OK] run_id=run_20260520_180121 mae=13.0131 rmse=15.7798
+[RUN] task=03 model=xgboost
+[OK] run_id=run_20260520_180129 mae=17.2244 rmse=20.6855
+[RUN] task=04 model=linear
+[OK] run_id=run_20260520_180201 mae=13.8047 rmse=14.6327
+[RUN] task=04 model=svr
+[OK] run_id=run_20260520_180208 mae=29.8806 rmse=34.2923
+[RUN] task=04 model=mlp
+[OK] run_id=run_20260520_180215 mae=22.1709 rmse=26.4783
+[RUN] task=04 model=lstm
+[OK] run_id=run_20260520_180223 mae=16.6386 rmse=20.0424
+[RUN] task=04 model=gru
+[OK] run_id=run_20260520_180232 mae=10.2802 rmse=12.6373
+[RUN] task=04 model=cnn
+[OK] run_id=run_20260520_180242 mae=20.1218 rmse=24.2675
+[RUN] task=04 model=xgboost
+[OK] run_id=run_20260520_180251 mae=21.9424 rmse=24.3690
+[RUN] task=05 model=linear
+[OK] run_id=run_20260520_180327 mae=18.2808 rmse=22.3129
+[RUN] task=05 model=svr
+[OK] run_id=run_20260520_180333 mae=32.5313 rmse=38.6140
+[RUN] task=05 model=mlp
+[OK] run_id=run_20260520_180340 mae=20.0659 rmse=24.4166
+[RUN] task=05 model=lstm
+[OK] run_id=run_20260520_180348 mae=30.0381 rmse=34.7309
+[RUN] task=05 model=gru
+[OK] run_id=run_20260520_180357 mae=22.1583 rmse=26.1047
+[RUN] task=05 model=cnn
+[OK] run_id=run_20260520_180409 mae=39.5519 rmse=43.9626
+[RUN] task=05 model=xgboost
+[OK] run_id=run_20260520_180426 mae=28.4010 rmse=32.0477
+[RUN] task=06 model=linear
+[OK] run_id=run_20260520_180522 mae=63.1211 rmse=66.6277
+[RUN] task=06 model=svr
+[OK] run_id=run_20260520_180535 mae=84.1002 rmse=87.6824
+[RUN] task=06 model=mlp
+[OK] run_id=run_20260520_180548 mae=72.4669 rmse=73.2774
+[RUN] task=06 model=lstm
+[OK] run_id=run_20260520_180606 mae=67.4995 rmse=69.2792
+[RUN] task=06 model=gru
+[OK] run_id=run_20260520_180624 mae=59.1959 rmse=61.3788
+[RUN] task=06 model=cnn
+[OK] run_id=run_20260520_180644 mae=67.6331 rmse=68.9757
+[RUN] task=06 model=xgboost
+[OK] run_id=run_20260520_180701 mae=90.8988 rmse=94.0547
+[RUN] task=07 model=linear
+[OK] run_id=run_20260520_180745 mae=18.7278 rmse=20.5098
+[RUN] task=07 model=svr
+[OK] run_id=run_20260520_180758 mae=13.6011 rmse=16.1608
+[RUN] task=07 model=mlp
+[OK] run_id=run_20260520_180812 mae=13.9296 rmse=16.3168
+[RUN] task=07 model=lstm
+[OK] run_id=run_20260520_180828 mae=12.2600 rmse=15.1382
+[RUN] task=07 model=gru
+[OK] run_id=run_20260520_180846 mae=13.9775 rmse=16.4613
+[RUN] task=07 model=cnn
+[OK] run_id=run_20260520_180906 mae=15.1789 rmse=17.2243
+[RUN] task=07 model=xgboost
+[OK] run_id=run_20260520_180924 mae=25.1821 rmse=28.6562
+[RUN] task=08 model=linear
+[OK] run_id=run_20260520_181019 mae=7.8074 rmse=10.2244
+[RUN] task=08 model=svr
+[OK] run_id=run_20260520_181032 mae=7.1331 rmse=9.1188
+[RUN] task=08 model=mlp
+[OK] run_id=run_20260520_181045 mae=9.5813 rmse=12.0639
+[RUN] task=08 model=lstm
+[OK] run_id=run_20260520_181102 mae=11.7002 rmse=14.0780
+[RUN] task=08 model=gru
+[OK] run_id=run_20260520_181120 mae=8.9696 rmse=10.8659
+[RUN] task=08 model=cnn
+[OK] run_id=run_20260520_181140 mae=9.0599 rmse=10.5935
+[RUN] task=08 model=xgboost
+[OK] run_id=run_20260520_181157 mae=5.2990 rmse=6.8857
+[RUN] task=09 model=linear
+[OK] run_id=run_20260520_181246 mae=65.3601 rmse=69.7426
+[RUN] task=09 model=svr
+[OK] run_id=run_20260520_181259 mae=84.7153 rmse=93.0234
+[RUN] task=09 model=mlp
+[OK] run_id=run_20260520_181313 mae=72.0568 rmse=76.6181
+[RUN] task=09 model=lstm
+[OK] run_id=run_20260520_181329 mae=86.0464 rmse=95.9095
+[RUN] task=09 model=gru
+[OK] run_id=run_20260520_181346 mae=83.2547 rmse=90.5597
+[RUN] task=09 model=cnn
+[OK] run_id=run_20260520_181407 mae=85.9225 rmse=94.1245
+[RUN] task=09 model=xgboost
+[OK] run_id=run_20260520_181424 mae=77.6923 rmse=84.2863
+[RUN] task=10 model=linear
+[OK] run_id=run_20260520_181516 mae=3.0305 rmse=3.9618
+[RUN] task=10 model=svr
+[OK] run_id=run_20260520_181529 mae=2.9716 rmse=3.6630
+[RUN] task=10 model=mlp
+[OK] run_id=run_20260520_181543 mae=13.7081 rmse=18.2012
+[RUN] task=10 model=lstm
+[OK] run_id=run_20260520_181601 mae=17.7836 rmse=23.1848
+[RUN] task=10 model=gru
+[OK] run_id=run_20260520_181619 mae=16.8592 rmse=21.2519
+[RUN] task=10 model=cnn
+[OK] run_id=run_20260520_181640 mae=15.1699 rmse=18.3963
+[RUN] task=10 model=xgboost
+[OK] run_id=run_20260520_181656 mae=9.9530 rmse=11.1716
+[RUN] task=11 model=linear
+[OK] run_id=run_20260520_181744 mae=29.5683 rmse=34.4661
+[RUN] task=11 model=svr
+[OK] run_id=run_20260520_181757 mae=34.5090 rmse=41.0190
+[RUN] task=11 model=mlp
+[OK] run_id=run_20260520_181810 mae=33.6815 rmse=40.6093
+[RUN] task=11 model=lstm
+[OK] run_id=run_20260520_181827 mae=37.4948 rmse=44.8601
+[RUN] task=11 model=gru
+[OK] run_id=run_20260520_181846 mae=43.7982 rmse=50.6608
+[RUN] task=11 model=cnn
+[OK] run_id=run_20260520_181856 mae=29.0184 rmse=36.2346
+[RUN] task=11 model=xgboost
+[OK] run_id=run_20260520_181905 mae=40.5475 rmse=45.0361
+[RUN] task=12 model=linear
+[OK] run_id=run_20260520_181933 mae=55.8131 rmse=57.2748
+[RUN] task=12 model=svr
+[OK] run_id=run_20260520_181940 mae=69.8560 rmse=71.4803
+[RUN] task=12 model=mlp
+[OK] run_id=run_20260520_181947 mae=66.5581 rmse=67.7713
+[RUN] task=12 model=lstm
+[OK] run_id=run_20260520_181956 mae=69.2848 rmse=72.4724
+[RUN] task=12 model=gru
+[OK] run_id=run_20260520_182005 mae=70.8386 rmse=72.7433
+[RUN] task=12 model=cnn
+[OK] run_id=run_20260520_182015 mae=82.4364 rmse=84.7695
+[RUN] task=12 model=xgboost
+[OK] run_id=run_20260520_182023 mae=96.4408 rmse=98.9400
+[RUN] task=13 model=linear
+[OK] run_id=run_20260520_182054 mae=23.7200 rmse=26.4485
+[RUN] task=13 model=svr
+[OK] run_id=run_20260520_182101 mae=22.2971 rmse=25.3391
+[RUN] task=13 model=mlp
+[OK] run_id=run_20260520_182108 mae=22.7932 rmse=25.5635
+[RUN] task=13 model=lstm
+[OK] run_id=run_20260520_182116 mae=27.8765 rmse=32.3735
+[RUN] task=13 model=gru
+[OK] run_id=run_20260520_182126 mae=24.8643 rmse=28.4308
+[RUN] task=13 model=cnn
+[OK] run_id=run_20260520_182135 mae=20.5185 rmse=23.5397
+[RUN] task=13 model=xgboost
+[OK] run_id=run_20260520_182144 mae=24.0652 rmse=25.8693
+[RUN] task=14 model=linear
+[OK] run_id=run_20260520_182219 mae=35.0917 rmse=46.0737
+[RUN] task=14 model=svr
+[OK] run_id=run_20260520_182226 mae=33.6829 rmse=43.3578
+[RUN] task=14 model=mlp
+[OK] run_id=run_20260520_182234 mae=36.8514 rmse=42.6194
+[RUN] task=14 model=lstm
+[OK] run_id=run_20260520_182243 mae=35.2574 rmse=42.4660
+[RUN] task=14 model=gru
+[OK] run_id=run_20260520_182251 mae=34.8055 rmse=42.2149
+[RUN] task=14 model=cnn
+[OK] run_id=run_20260520_182301 mae=33.7467 rmse=40.3671
+[RUN] task=14 model=xgboost
+[OK] run_id=run_20260520_182309 mae=34.3163 rmse=44.1044
+[RUN] task=15 model=linear
+[OK] run_id=run_20260520_182342 mae=6.9675 rmse=8.6288
+[RUN] task=15 model=svr
+[OK] run_id=run_20260520_182349 mae=26.8302 rmse=29.7348
+[RUN] task=15 model=mlp
+[OK] run_id=run_20260520_182355 mae=14.1257 rmse=16.7365
+[RUN] task=15 model=lstm
+[OK] run_id=run_20260520_182404 mae=27.9210 rmse=31.0927
+[RUN] task=15 model=gru
+[OK] run_id=run_20260520_182413 mae=27.1933 rmse=29.3668
+[RUN] task=15 model=cnn
+[OK] run_id=run_20260520_182423 mae=31.2791 rmse=33.2840
+[RUN] task=15 model=xgboost
+[OK] run_id=run_20260520_182431 mae=7.6675 rmse=10.0107
+[DONE] Wrote logs\load_all_tasks_baselines.csv (105 rows).
+
+(venv) D:\Tests\02\coding_implementation\code_implementation>

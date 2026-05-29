@@ -55,6 +55,9 @@ class ModelManagerAgent(BaseAgent):
         # Phase 104: interactive guidance ranges for dynamic search space filtering.
         # param -> (low, high, is_int, log)
         self._guided_ranges: Dict[str, Tuple[float, float, bool, bool]] = {}
+        # When HPO is enabled, we dispatch one final evaluation on the test split
+        # using the best completed trial (variant=hpo_best). Orchestrator waits for it.
+        self._final_dispatched: bool = False
 
     def _make_default_params(self, model_type: str) -> Dict[str, Any]:
         mt = str(model_type or "").lower()
@@ -415,7 +418,38 @@ class ModelManagerAgent(BaseAgent):
                                 payload={"event": "thought", "track": track, "summary": f"Stopping HPO ({reason}). completed={self.hpo_state.completed} best_rmse={best} epsilon={eps}"},
                             )
                             self.publish(topic_type="action", kind="event", payload={"event": "action", "track": track, "action": "stop_hpo", "reason": reason})
-                            # Clear batch state.
+                            # Dispatch one final train command evaluated on the test split using the
+                            # best completed trial hyperparameters. optuna is disabled so the ModelDeveloper
+                            # computes metrics on the test set (not validation).
+                            if (not self._final_dispatched) and self._last_plan is not None:
+                                try:
+                                    bt = self._study.best_trial  # may raise if no complete trials
+                                    best_params = dict(bt.params or {})
+                                except Exception:
+                                    best_params = {}
+
+                                final_plan = dict(self._last_plan)
+                                final_plan["hyperparams"] = best_params or (final_plan.get("hyperparams", {}) or {})
+                                final_plan["hpo"] = {"enabled": False, "n_trials": 1}
+                                final_plan["variant"] = "hpo_best"
+                                self._final_dispatched = True
+
+                                corr_id = str(uuid.uuid4())
+                                self.publish(
+                                    topic_type="thought",
+                                    kind="event",
+                                    payload={"event": "thought", "track": track, "summary": "Dispatching final best-trial evaluation on test (variant=hpo_best)."},
+                                    correlation_id=corr_id,
+                                )
+                                self.publish(
+                                    topic_type="action",
+                                    kind="event",
+                                    payload={"event": "action", "track": track, "action": "publish_train_command_best_trial"},
+                                    correlation_id=corr_id,
+                                )
+                                self.publish(topic_type="train", kind="command", payload=final_plan, correlation_id=corr_id)
+
+                            # Clear batch state and stop scheduling more trials.
                             self._batch_trials = []
                             self._batch_results = {}
                             continue

@@ -74,6 +74,12 @@ def parse_args():
     p.add_argument("--with_baselines", action="store_true", help="In research mode, also run XGBoost baselines for both tracks.")
     p.add_argument("--interactive", action="store_true", help="Enable Phase D1 human-in-the-loop gates (research mode).")
     p.add_argument("--use_llm", action="store_true", help="Enable OpenAI-backed Task Manager translation (requires OPENAI_API_KEY).")
+    p.add_argument(
+        "--research_tracks",
+        type=str,
+        default="load,solar",
+        help="Comma-separated tracks to run in research mode (default: load,solar).",
+    )
 
     p.add_argument("--tick_seconds", type=float, default=1.0)
     p.add_argument("--timeout_seconds", type=float, default=600.0)
@@ -163,8 +169,15 @@ def main():
         agents = [task_manager, prep, model_manager, model_dev]
 
     else:
+        research_tracks = [t.strip().lower() for t in str(args.research_tracks or "").split(",") if t.strip()]
+        if not research_tracks:
+            research_tracks = ["load", "solar"]
+        for t in research_tracks:
+            if t not in ("load", "solar"):
+                raise SystemExit(f"Unknown --research_tracks entry: {t} (allowed: load, solar)")
+
         if not args.no_precheck:
-            ok, report = run_phase_c_precheck(manifest=args.manifest, tracks=("load", "solar"), check_fractional_weather=True)
+            ok, report = run_phase_c_precheck(manifest=args.manifest, tracks=tuple(research_tracks), check_fractional_weather=True)
             if not ok:
                 print("[ERROR] Phase C precheck failed (research mode). Fix Phase A artifacts first.", flush=True)
                 for i in report.get("issues", []):
@@ -185,6 +198,8 @@ def main():
 
         interactive_tm = None
         if args.interactive:
+            if set(research_tracks) != {"load", "solar"}:
+                raise SystemExit("--interactive research mode currently requires --research_tracks load,solar")
             interactive_tm = InteractiveTaskManagerAgent(
                 AgentConfig(agent_id="InteractiveTaskManagerAgent", role="task_manager", run_id=run_id),
                 pool,
@@ -208,30 +223,34 @@ def main():
                 ),
             )
         else:
-            tm_load = TaskManagerAgent(
-                AgentConfig(agent_id="TaskManagerLoad", role="task_manager", run_id=run_id),
-                pool,
-                RunConfig(
-                    manifest_path=args.manifest,
-                    track="load",
-                    model_type="transformer",
-                    window=common_window,
-                    training=common_training,
-                    hpo={"enabled": False, "n_trials": 1},
-                ),
-            )
-            tm_solar = TaskManagerAgent(
-                AgentConfig(agent_id="TaskManagerSolar", role="task_manager", run_id=run_id),
-                pool,
-                RunConfig(
-                    manifest_path=args.manifest,
-                    track="solar",
-                    model_type="transformer",
-                    window=common_window,
-                    training=common_training,
-                    hpo={"enabled": False, "n_trials": 1},
-                ),
-            )
+            tm_load = None
+            tm_solar = None
+            if "load" in research_tracks:
+                tm_load = TaskManagerAgent(
+                    AgentConfig(agent_id="TaskManagerLoad", role="task_manager", run_id=run_id),
+                    pool,
+                    RunConfig(
+                        manifest_path=args.manifest,
+                        track="load",
+                        model_type="transformer",
+                        window=common_window,
+                        training=common_training,
+                        hpo={"enabled": False, "n_trials": 1},
+                    ),
+                )
+            if "solar" in research_tracks:
+                tm_solar = TaskManagerAgent(
+                    AgentConfig(agent_id="TaskManagerSolar", role="task_manager", run_id=run_id),
+                    pool,
+                    RunConfig(
+                        manifest_path=args.manifest,
+                        track="solar",
+                        model_type="transformer",
+                        window=common_window,
+                        training=common_training,
+                        hpo={"enabled": False, "n_trials": 1},
+                    ),
+                )
         prep = PreparationAgent(AgentConfig(agent_id="PreparationAgent", role="preparation", run_id=run_id), pool)
         load_agent = LoadForecastingAgent(AgentConfig(agent_id="LoadForecastingAgent", role="load_forecasting", run_id=run_id), pool)
         solar_agent = SolarForecastingAgent(AgentConfig(agent_id="SolarForecastingAgent", role="solar_forecasting", run_id=run_id), pool)
@@ -239,7 +258,18 @@ def main():
         deploy = DeploymentOperatorAgent(AgentConfig(agent_id="DeploymentOperatorAgent", role="deployment", run_id=run_id), pool)
         integ = ForecastIntegrationAgent(AgentConfig(agent_id="ForecastIntegrationAgent", role="forecast_integration", run_id=run_id), pool)
 
-        agents = ([interactive_tm] if interactive_tm is not None else [tm_load, tm_solar]) + [prep, load_agent, solar_agent, dev, deploy, integ]
+        if interactive_tm is not None:
+            agents = [interactive_tm, prep, load_agent, solar_agent, dev, deploy, integ]
+        else:
+            tm_agents = [a for a in (tm_load, tm_solar) if a is not None]
+            track_agents = []
+            if "load" in research_tracks:
+                track_agents.append(load_agent)
+            if "solar" in research_tracks:
+                track_agents.append(solar_agent)
+            agents = tm_agents + [prep] + track_agents + [dev]
+            if set(research_tracks) == {"load", "solar"}:
+                agents += [deploy, integ]
 
     start = time.time()
     done = False
@@ -322,6 +352,9 @@ def main():
                 done = True
 
         if args.mode == "research" and not args.interactive:
+            research_tracks = [t.strip().lower() for t in str(args.research_tracks or "").split(",") if t.strip()]
+            if not research_tracks:
+                research_tracks = ["load", "solar"]
             prep_msgs = pool.find_by_topic("prepare", topic_source=run_id)
             for m in prep_msgs:
                 if m.kind == "event" and m.payload.get("event") == "ready":
@@ -329,18 +362,23 @@ def main():
                     if tr in ready:
                         ready[tr] = True
 
-            if ready["load"] and ready["solar"] and not injected_train:
+            all_ready = all(bool(ready.get(t, False)) for t in research_tracks)
+            if all_ready and not injected_train:
                 injected_train = True
-                load_ready_msg = next(
-                    m for m in prep_msgs if m.kind == "event" and m.payload.get("event") == "ready" and m.payload.get("track") == "load"
-                )
-                solar_ready_msg = next(
-                    m for m in prep_msgs if m.kind == "event" and m.payload.get("event") == "ready" and m.payload.get("track") == "solar"
-                )
+                load_ready_msg = None
+                solar_ready_msg = None
+                if "load" in research_tracks:
+                    load_ready_msg = next(
+                        m for m in prep_msgs if m.kind == "event" and m.payload.get("event") == "ready" and m.payload.get("track") == "load"
+                    )
+                if "solar" in research_tracks:
+                    solar_ready_msg = next(
+                        m for m in prep_msgs if m.kind == "event" and m.payload.get("event") == "ready" and m.payload.get("track") == "solar"
+                    )
                 corr_id = f"{run_id}_train"
 
                 # Optional: run baselines in the same run_id (so integration can compare error distributions).
-                if args.with_baselines:
+                if args.with_baselines and set(research_tracks) == {"load", "solar"}:
                     xgb_hp = {
                         "n_estimators": 300,
                         "max_depth": 6,
@@ -379,50 +417,52 @@ def main():
                             )
                         )
 
-                pool.publish(
-                    Message.new(
-                        topic=TopicId("train", run_id),
-                        kind="command",
-                        sender="Orchestrator",
-                        sender_role="system",
-                        payload={
-                            "command": "train",
-                            "track": "load",
-                            "paths": load_ready_msg.payload["paths"],
-                            "columns": load_ready_msg.payload["columns"],
-                            "window": common_window,
-                            "training": common_training,
-                            "model_name": args.load_model,
-                            "strategy": "A",
-                            "add_future_indicator": True,
-                            "use_hour_embedding": False,
-                        },
-                        correlation_id=corr_id,
-                        run_id=run_id,
+                if "load" in research_tracks and load_ready_msg is not None:
+                    pool.publish(
+                        Message.new(
+                            topic=TopicId("train", run_id),
+                            kind="command",
+                            sender="Orchestrator",
+                            sender_role="system",
+                            payload={
+                                "command": "train",
+                                "track": "load",
+                                "paths": load_ready_msg.payload["paths"],
+                                "columns": load_ready_msg.payload["columns"],
+                                "window": common_window,
+                                "training": common_training,
+                                "model_name": args.load_model,
+                                "strategy": "A",
+                                "add_future_indicator": True,
+                                "use_hour_embedding": False,
+                            },
+                            correlation_id=corr_id,
+                            run_id=run_id,
+                        )
                     )
-                )
-                pool.publish(
-                    Message.new(
-                        topic=TopicId("train", run_id),
-                        kind="command",
-                        sender="Orchestrator",
-                        sender_role="system",
-                        payload={
-                            "command": "train",
-                            "track": "solar",
-                            "paths": solar_ready_msg.payload["paths"],
-                            "columns": solar_ready_msg.payload["columns"],
-                            "window": common_window,
-                            "training": common_training,
-                            "model_name": args.solar_model,
-                            "strategy": "B",
-                            "add_future_indicator": True,
-                            "use_hour_embedding": True,
-                        },
-                        correlation_id=corr_id,
-                        run_id=run_id,
+                if "solar" in research_tracks and solar_ready_msg is not None:
+                    pool.publish(
+                        Message.new(
+                            topic=TopicId("train", run_id),
+                            kind="command",
+                            sender="Orchestrator",
+                            sender_role="system",
+                            payload={
+                                "command": "train",
+                                "track": "solar",
+                                "paths": solar_ready_msg.payload["paths"],
+                                "columns": solar_ready_msg.payload["columns"],
+                                "window": common_window,
+                                "training": common_training,
+                                "model_name": args.solar_model,
+                                "strategy": "B",
+                                "add_future_indicator": True,
+                                "use_hour_embedding": True,
+                            },
+                            correlation_id=corr_id,
+                            run_id=run_id,
+                        )
                     )
-                )
 
         # Phase D1 interactive gate handling (CLI side)
         if args.mode == "research" and args.interactive:
@@ -475,16 +515,36 @@ def main():
         for m in eval_msgs:
             if m.kind == "result" and m.payload.get("event") == "evaluation_complete":
                 if args.mode == "baseline":
+                    if args.hpo:
+                        opt = (m.payload.get("optuna", {}) or {})
+                        # During HPO, intermediate trials emit evaluation_complete with optuna.enabled=True.
+                        # We only stop once the manager has dispatched a final best-model train (variant=hpo_best)
+                        # which emits evaluation_complete without optuna enabled.
+                        if bool(opt.get("enabled")):
+                            continue
+                        if str(m.payload.get("variant") or "") != "hpo_best":
+                            continue
                     done = True
                     break
 
         if args.mode == "research":
-            integ_msgs = pool.find_by_topic("integrate", topic_source=run_id)
-            if any(
-                m.kind == "result" and m.payload.get("event") in ("joint_report_ready", "final_research_summary_ready")
-                for m in integ_msgs
-            ):
-                done = True
+            research_tracks = [t.strip().lower() for t in str(args.research_tracks or "").split(",") if t.strip()]
+            if not research_tracks:
+                research_tracks = ["load", "solar"]
+            if set(research_tracks) == {"load", "solar"}:
+                integ_msgs = pool.find_by_topic("integrate", topic_source=run_id)
+                if any(
+                    m.kind == "result" and m.payload.get("event") in ("joint_report_ready", "final_research_summary_ready")
+                    for m in integ_msgs
+                ):
+                    done = True
+            else:
+                # Single-track research run: stop after we receive a completed evaluation for that track.
+                for m in eval_msgs:
+                    if m.kind == "result" and m.payload.get("event") == "evaluation_complete":
+                        if str(m.payload.get("track") or "") in research_tracks:
+                            done = True
+                            break
 
         time.sleep(args.tick_seconds)
 

@@ -263,6 +263,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--config", type=str, default="", help="YAML config path (optional).")
 
+    # Track selection: default preserves existing behavior (both tracks).
+    # Useful for running load-only sweeps across tasks without wasting time on solar.
+    p.add_argument(
+        "--tracks",
+        type=str,
+        default="load,solar",
+        help="Comma-separated tracks to prepare: load, solar (default: load,solar).",
+    )
+
     p.add_argument("--load_zip", type=str, default=None)
     p.add_argument("--solar_zip", type=str, default=None)
     p.add_argument("--out_dir", type=str, default=None)
@@ -299,7 +308,8 @@ def _finalize_config(args: argparse.Namespace) -> PrepConfig:
     merged = _deep_update(base, yaml_cfg)
 
     for key, val in vars(args).items():
-        if key == "config":
+        # argparse-only fields that are not part of PrepConfig
+        if key in ("config", "tracks"):
             continue
         if val is not None:
             merged[key] = val
@@ -315,25 +325,12 @@ def main():
     out_dir = _ensure_dir(Path(cfg.out_dir))
     LOGGER.info("Starting Phase-A prepare_data with config: %s", cfg)
 
-    # LOAD
-    load_df = load_gefcom_load_task(LoadLoaderConfig(zip_path=Path(cfg.load_zip), task_id=cfg.load_task_id))
-    if cfg.add_time_features:
-        load_df = add_time_features(load_df)
-    load_feature_cols, load_target_cols, load_hist_cols, load_future_cols = _infer_cols_load(
-        load_df, include_weather_future=cfg.load_future_include_weather
-    )
-
-    # SOLAR
-    solar_df = load_gefcom_solar_task(
-        SolarLoaderConfig(
-            zip_path=Path(cfg.solar_zip),
-            task_id=cfg.solar_task_id,
-            apply_decumulation=cfg.solar_decumulate,
-        )
-    )
-    if cfg.add_time_features:
-        solar_df = add_time_features(solar_df)
-    solar_feature_cols, solar_target_cols, solar_hist_cols, solar_future_cols = _infer_cols_solar(solar_df)
+    tracks = {t.strip().lower() for t in str(getattr(args, "tracks", "") or "").split(",") if t.strip()}
+    if not tracks:
+        tracks = {"load", "solar"}
+    unknown = sorted([t for t in tracks if t not in {"load", "solar"}])
+    if unknown:
+        raise ValueError(f"Unknown --tracks entries: {unknown}. Allowed: load, solar.")
 
     manifest: Dict[str, Any] = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -356,33 +353,51 @@ def main():
         "tracks": {},
     }
 
-    manifest["tracks"]["load"] = _prepare_one_track(
-        name="load",
-        df_clean=load_df,
-        feature_cols=load_feature_cols,
-        target_cols=load_target_cols,
-        hist_cols=load_hist_cols,
-        future_cols=load_future_cols,
-        out_dir=out_dir,
-        train_ratio=cfg.train_ratio,
-        val_ratio=cfg.val_ratio,
-        test_ratio=cfg.test_ratio,
-        scaler_kind=cfg.scaler_kind,
-    )
+    if "load" in tracks:
+        load_df = load_gefcom_load_task(LoadLoaderConfig(zip_path=Path(cfg.load_zip), task_id=cfg.load_task_id))
+        if cfg.add_time_features:
+            load_df = add_time_features(load_df)
+        load_feature_cols, load_target_cols, load_hist_cols, load_future_cols = _infer_cols_load(
+            load_df, include_weather_future=cfg.load_future_include_weather
+        )
+        manifest["tracks"]["load"] = _prepare_one_track(
+            name="load",
+            df_clean=load_df,
+            feature_cols=load_feature_cols,
+            target_cols=load_target_cols,
+            hist_cols=load_hist_cols,
+            future_cols=load_future_cols,
+            out_dir=out_dir,
+            train_ratio=cfg.train_ratio,
+            val_ratio=cfg.val_ratio,
+            test_ratio=cfg.test_ratio,
+            scaler_kind=cfg.scaler_kind,
+        )
 
-    manifest["tracks"]["solar"] = _prepare_one_track(
-        name="solar",
-        df_clean=solar_df,
-        feature_cols=solar_feature_cols,
-        target_cols=solar_target_cols,
-        hist_cols=solar_hist_cols,
-        future_cols=solar_future_cols,
-        out_dir=out_dir,
-        train_ratio=cfg.train_ratio,
-        val_ratio=cfg.val_ratio,
-        test_ratio=cfg.test_ratio,
-        scaler_kind=cfg.scaler_kind,
-    )
+    if "solar" in tracks:
+        solar_df = load_gefcom_solar_task(
+            SolarLoaderConfig(
+                zip_path=Path(cfg.solar_zip),
+                task_id=cfg.solar_task_id,
+                apply_decumulation=cfg.solar_decumulate,
+            )
+        )
+        if cfg.add_time_features:
+            solar_df = add_time_features(solar_df)
+        solar_feature_cols, solar_target_cols, solar_hist_cols, solar_future_cols = _infer_cols_solar(solar_df)
+        manifest["tracks"]["solar"] = _prepare_one_track(
+            name="solar",
+            df_clean=solar_df,
+            feature_cols=solar_feature_cols,
+            target_cols=solar_target_cols,
+            hist_cols=solar_hist_cols,
+            future_cols=solar_future_cols,
+            out_dir=out_dir,
+            train_ratio=cfg.train_ratio,
+            val_ratio=cfg.val_ratio,
+            test_ratio=cfg.test_ratio,
+            scaler_kind=cfg.scaler_kind,
+        )
 
     manifest_path = out_dir / cfg.manifest_name
     with manifest_path.open("w", encoding="utf-8") as f:
@@ -394,4 +409,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
