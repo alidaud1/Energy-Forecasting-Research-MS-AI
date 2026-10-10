@@ -1,0 +1,37 @@
+{
+  "input": ".",
+  "output": "eda_outputs",
+  "plots": [
+    "01_synchronized_actuals.png",
+    "02_distributions.png",
+    "03_daily_profiles_by_scenario.png",
+    "04_scenario_boxplots.png",
+    "05_dependence_scatter.png",
+    "06_forecast_fan_charts.png",
+    "07_fused_net_load_fan.png"
+  ],
+  "rows": 336,
+  "start": "2020-01-01 00:00:00",
+  "end": "2020-01-14 23:00:00",
+  "scenarios": [
+    "cloudy_low_solar",
+    "evening_ramp",
+    "high_demand",
+    "normal",
+    "solar_outage"
+  ],
+  "missing_values": 0,
+  "load_min_max_mw": [
+    142.83676420937172,
+    239.6176029720989
+  ],
+  "solar_min_max_mw": [
+    0.0,
+    60.0
+  ],
+  "net_load_min_max_mw": [
+    88.60666950919165,
+    239.6176029720989
+  ],
+  "load_solar_pearson": -0.07110725507849035
+}

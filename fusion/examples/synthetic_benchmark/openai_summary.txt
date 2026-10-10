@@ -1,0 +1,7 @@
+- Benchmark scope: controlled_synthetic_synchronized_grid_benchmark at grid level over 14 days (336 timestamps), seed 2026, scenarios = cloudy_low_solar, evening_ramp, high_demand, normal, solar_outage; solar capacity 60.0 MW; not_measured_utility_data = true.
+- Forecast metrics: mean pinball loss = 2.44 MW; q05–q95 coverage = 0.95 with mean interval width = 33.55 MW; quantile crossings = 0.
+- Peak/ramp: peak net load = 226.85 MW at hour 19 (q95 = 243.24); minimum = 99.05 MW at hour 12; max 1h ramps = +21.71/−53.17 MW; max 3h ramp = 58.33 MW; actual net load range = 88.61–239.62 MW.
+- Reserve: upward reserve (q95) requirement = 22.6 MW (mean = 16.38 MW); load uncertainty ratio = 0.07; max q95 upward ramp = 23.36 MW.
+- Risk/recommendation: risk flag = steep_net_load_ramp; recommend provisioning flexible capacity for a 58.3 MW 3h ramp and allocating upward reserve at least equal to the forecast uncertainty margin.
+- Solar context: daylight capacity factor = 0.41 on 60.0 MW capacity; P10 daylight output = 20.18 MW across 150 daylight hours; low_solar_indicator = false; scenarios include solar_outage and cloudy_low_solar.
+- Limitation: controlled synthetic load–solar fusion experiment (not measured utility data); numerical decisions were deterministic, and I only explain the supplied results; findings reflect this synthetic, short (14-day) window and may not generalize to utility operations.

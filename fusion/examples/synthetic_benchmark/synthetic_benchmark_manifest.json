@@ -1,0 +1,33 @@
+{
+  "benchmark_type": "controlled_synthetic_synchronized_grid_benchmark",
+  "purpose": "Synchronized proof-of-concept for Fusion and Decision Agents",
+  "seed": 2026,
+  "start": "2020-01-01 00:00:00",
+  "end": "2020-01-14 23:00:00",
+  "capacity_mw": 60.0,
+  "n_scenarios": 5000,
+  "scenario_definitions": {
+    "normal": "baseline daily load and solar",
+    "cloudy_low_solar": "reduced PV availability with slightly higher demand",
+    "high_demand": "18 percent demand multiplier",
+    "solar_outage": "near-zero PV availability",
+    "evening_ramp": "elevated evening demand and reduced PV"
+  },
+  "limitations": [
+    "Synthetic observations are not a claim of measured grid behaviour.",
+    "Marginals and dependence are calibrated assumptions for controlled testing.",
+    "Measured synchronized utility data remain future validation work."
+  ],
+  "inputs": [
+    "synthetic_actuals.csv",
+    "load_predictions.csv",
+    "solar_predictions.csv",
+    "solar_index.csv"
+  ],
+  "outputs": [
+    "joint_run/net_load_forecast.csv",
+    "joint_run/decision_report.json",
+    "joint_run/joint_manifest.json",
+    "joint_evaluation.json"
+  ]
+}

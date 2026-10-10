@@ -1,0 +1,40 @@
+{
+  "load_predictions": "load_predictions.csv",
+  "solar_predictions": "solar_predictions.csv",
+  "solar_timestamps": "solar_index.csv",
+  "forecast_path": "joint_run/net_load_forecast.csv",
+  "decision_report_path": "joint_run/decision_report.json",
+  "n_scenarios": 5000,
+  "seed": 2026,
+  "calendar_overlap": {
+    "load_steps": 336,
+    "solar_steps": 336,
+    "shared_steps": 336,
+    "requires_alignment": false
+  },
+  "assumptions": {
+    "solar_capacity_mw": 60.0,
+    "solar_capacity_basis": "ASSUMED: GEFCom2014-S publishes output as a fraction of installed capacity and never states the capacity in MW",
+    "alignment": "none: calendars overlap",
+    "alignment_rule": null,
+    "solar_local_offset_hours": null,
+    "caveat": null
+  },
+  "fusion_diagnostics": {
+    "n_scenarios": 5000,
+    "n_timestamps": 336,
+    "rank_correlation": -0.8044719804496822,
+    "copula_correlation": -0.8177492285079292,
+    "dependence_source": "estimated from bundle actuals",
+    "unit": "MW",
+    "location": "grid",
+    "seed": 2026,
+    "solar_capacity_mw": 60.0,
+    "solar_clamped_to": [
+      0.0,
+      60.0
+    ],
+    "alignment": "calendar overlap",
+    "alignment_rule": null
+  }
+}

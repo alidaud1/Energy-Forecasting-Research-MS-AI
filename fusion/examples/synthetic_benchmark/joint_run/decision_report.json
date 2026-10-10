@@ -1,0 +1,32 @@
+{
+  "summary": {
+    "location": "grid",
+    "unit": "MW",
+    "n_timestamps": 336,
+    "peak_net_load_mw": 226.84583425994873,
+    "peak_net_load_hour": 19,
+    "min_net_load_mw": 99.04529398228627,
+    "min_net_load_hour": 12,
+    "peak_net_load_q95_mw": 243.24491656064274,
+    "max_upward_ramp_mw": 21.712510753859277,
+    "max_downward_ramp_mw": -53.17180464569438,
+    "max_3h_net_load_ramp_mw": 58.32654634265799,
+    "max_q95_upward_ramp_mw": 23.36186666110231,
+    "reserve_requirement_mw": 22.603699960492406,
+    "mean_reserve_requirement_mw": 16.37919505284511,
+    "solar_capacity_mw": 60.0,
+    "solar_daylight_capacity_factor": 0.4112701102085693,
+    "solar_p10_daylight_mw": 20.177181596928015,
+    "daylight_hours_in_window": 150,
+    "low_solar_indicator": false,
+    "load_uncertainty_ratio": 0.07047947100331094,
+    "reserve_quantile": "q95"
+  },
+  "risk_flags": [
+    "steep_net_load_ramp"
+  ],
+  "recommendations": [
+    "Provision flexible capacity for a 58.3 MW net-load ramp over 3 hour(s).",
+    "Allocate upward reserve at least equal to the forecast uncertainty margin."
+  ]
+}

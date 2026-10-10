@@ -1,6 +1,20 @@
 # Energy-Forecasting-Research-MS-AI
 A Multi-Agent Transformer-Based Framework for Joint Load and Solar Energy Forecasting Using Agentic AI
 
+## Probabilistic fusion and decision-support module
+
+The `fusion/` package validates and aligns independently generated load and
+solar forecast artifacts, creates net-load scenarios, and produces deterministic
+decision indicators. It includes a synchronized synthetic benchmark and frozen
+example outputs for reproducing the fusion evaluation. GEFCom load and solar
+competition tracks are not coincident measurements; results from cyclically
+aligned tracks must not be described as measured joint-grid forecasts.
+
+Start with [`fusion/README.md`](fusion/README.md) for setup, benchmark commands,
+input forecast format, assumptions, and test instructions. Generated runs and
+local API keys are excluded by `.gitignore`; the optional key template is
+`fusion/.env.example`.
+
 ## Phase A (Data Pipeline) - A1
 
 This directory implements the Phase A1 blueprint from `Planning/01-deep-research-report-phase-A1.md`:

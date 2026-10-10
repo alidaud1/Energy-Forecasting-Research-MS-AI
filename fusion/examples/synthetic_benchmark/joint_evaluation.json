@@ -1,0 +1,23 @@
+{
+  "benchmark_type": "controlled_synthetic_synchronized_grid_benchmark",
+  "not_measured_utility_data": true,
+  "n_timestamps": 336,
+  "days": 14,
+  "solar_capacity_mw": 60.0,
+  "seed": 2026,
+  "scenarios": [
+    "cloudy_low_solar",
+    "evening_ramp",
+    "high_demand",
+    "normal",
+    "solar_outage"
+  ],
+  "mean_pinball_loss_mw": 2.44012499689623,
+  "coverage_q05_q95": 0.9523809523809523,
+  "mean_interval_width_q05_q95_mw": 33.55486026418417,
+  "quantile_crossing_count": 0,
+  "actual_net_load_min_mw": 88.60666950919165,
+  "actual_net_load_max_mw": 239.6176029720989,
+  "fusion_forecast": "joint_run/net_load_forecast.csv",
+  "decision_report": "joint_run/decision_report.json"
+}

@@ -258,3 +258,9 @@ next-env.d.ts
 push-ecr-admin.ps1
 
 react_workbench/node_modules/
+
+# Fusion/decision agent local secrets, caches, and generated runs
+**/.env
+**/__pycache__/
+**/.pytest_cache/
+joint_outputs/
