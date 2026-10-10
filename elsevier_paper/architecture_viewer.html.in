@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Load–Solar Framework | Architecture</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #edf1f5; color: #253544; font-family: Arial, Helvetica, sans-serif; }
+    header, main, footer { width: min(1120px, 100%); margin: auto; padding: 24px; }
+    header { padding-bottom: 18px; }
+    .eyebrow { color: #52697d; letter-spacing: .12em; font-size: 12px; text-transform: uppercase; margin-bottom: 10px; }
+    h1 { font-size: clamp(24px, 3vw, 34px); margin: 0 0 12px; }
+    p { line-height: 1.65; margin: 0 0 16px; }
+    .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .toolbar a, button { font: inherit; font-size: 14px; padding: 10px 15px; border-radius: 5px; border: 1px solid #b9c6d2; background: white; color: #253544; cursor: pointer; text-decoration: none; }
+    .toolbar a.primary { background: #285e86; color: white; border-color: #285e86; }
+    button:focus-visible, a:focus-visible { outline: 3px solid #ba8c31; outline-offset: 3px; }
+    main { padding-top: 0; }
+    figure { margin: 0; }
+    .sheet { border: 1px solid #cbd6e0; border-radius: 8px; padding: 20px; background: white; overflow: auto; }
+    svg { display: block; width: 100%; height: auto; min-width: 650px; }
+    figcaption { background: white; border: 1px solid #cbd6e0; margin-top: 14px; padding: 18px 20px; font-size: 14px; line-height: 1.65; }
+    details { background: white; border: 1px solid #cbd6e0; padding: 16px 20px; margin-top: 14px; font-size: 14px; line-height: 1.65; }
+    summary { font-weight: 700; cursor: pointer; }
+    details p { margin: 12px 0 0; }
+    footer { font-size: 13px; padding-top: 0; color: #52697d; }
+    .paper-size .sheet { width: {{WIDTH_IN}}in; max-width: none; padding: 0; border: 0; border-radius: 0; }
+    .paper-size .sheet svg { width: {{WIDTH_IN}}in; min-width: 0; }
+    @media print {
+      @page { size: A4 portrait; margin: 16mm; }
+      body { background: white; }
+      header, details, footer { display: none; }
+      main { padding: 0; width: auto; }
+      .sheet, .paper-size .sheet { width: 100%; border: 0; padding: 0; overflow: visible; }
+      .sheet svg, .paper-size .sheet svg { width: 100%; min-width: 0; }
+      figcaption { padding: 9pt 0 0; margin-top: 0; border: 0; font-size: 9pt; }
+      figure { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="eyebrow">Journal artwork · Main architecture</div>
+    <h1>Load–solar forecasting and decision support</h1>
+    <p>Independent forecasting workflows, validated scenario fusion and an auditable decision report. Original vector icons and a consistent type scale keep the roles and information flow readable.</p>
+    <div class="toolbar">
+      <a class="primary" href="figures/01_system_architecture.pdf" download>Download paper PDF</a>
+      <a href="figures/01_system_architecture.svg" download>Download vector SVG</a>
+      <a href="figures/01_system_architecture.png" download>Download 400-dpi PNG</a>
+      <button id="size" type="button" aria-pressed="false">Preview at manuscript width</button>
+      <button id="print" type="button">Print with caption</button>
+    </div>
+  </header>
+  <main>
+    <figure>
+      <div class="sheet">{{SVG}}</div>
+      <figcaption><strong>Figure caption.</strong> {{CAPTION}}</figcaption>
+    </figure>
+    <details>
+      <summary>Reading the architecture and its evidence</summary>
+      <p><strong>Forecasting roles:</strong> the validator checks the source, the Data Agent prepares chronological partitions, Feature Engineering constructs model inputs, Statistics summarizes training data, Training fits quantile models, review examines validation diagnostics, and Evaluation scores frozen forecasts. These responsibilities run separately for load and solar.</p>
+      <p><strong>Training feedback:</strong> the original interface supports human review. The bounded measured-data experiment substitutes a validation-only stop/retrain controller in that slot; its model candidates and training budgets are fixed in advance.</p>
+      <p><strong>Data routes:</strong> the GEFCom tracks are evaluated separately. Compatible OPSD forecasts supply the measured joint experiments. Scripted synthetic quantile curves enter directly through the alternative route. Geographic equivalence is established by dataset selection, not authenticated by the contract.</p>
+      <p><strong>Decision reporting:</strong> net-load quantiles and paired scenarios produce deterministic peaks, ramps, reserve proxies and risk flags. Optional language-model text explains the saved report. The study does not validate utility dispatch actions.</p>
+    </details>
+    <details>
+      <summary>Figure typography and exports</summary>
+      <p>The figure is designed at {{WIDTH_DISPLAY}} inches wide (the manuscript's 390 TeX-point text width) with 9 pt labels, 10 pt node titles and 11 pt stage headings. Its Arial-compatible Liberation Sans fonts are embedded in PDF; SVG lettering is converted to vector outlines. The manuscript body and captions retain the Elsevier template typography.</p>
+      <p>The PDF is the recommended LaTeX artwork. The inline diagram works offline; keep the accompanying <code>figures/</code> directory with this HTML to use the download links. The builder and icon source are in <code>experiments/build_architecture.py</code>.</p>
+    </details>
+  </main>
+  <footer>Visual reference: numbered stages and role hierarchy in Zuo et al., “Large Language Model-Empowered Interactive Load Forecasting,” Figures 1–2. All icons and artwork here are newly drawn for this system.</footer>
+  <script>
+    document.getElementById('size').addEventListener('click', function () {
+      const enabled = document.body.classList.toggle('paper-size');
+      this.setAttribute('aria-pressed', String(enabled));
+      this.textContent = enabled ? 'Fit to window' : 'Preview at manuscript width';
+    });
+    document.getElementById('print').addEventListener('click', () => window.print());
+  </script>
+</body>
+</html>

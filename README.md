@@ -15,6 +15,11 @@ input forecast format, assumptions, and test instructions. Generated runs and
 local API keys are excluded by `.gitignore`; the optional key template is
 `fusion/.env.example`.
 
+Journal experiment runners, statistical audits, and tests are available in
+[`elsevier_paper/experiments/`](elsevier_paper/experiments/README.md).
+That directory documents the standalone checks and the additional forecasting
+source trees, datasets, and saved artifacts required for the larger experiments.
+
 ## Phase A (Data Pipeline) - A1
 
 This directory implements the Phase A1 blueprint from `Planning/01-deep-research-report-phase-A1.md`:

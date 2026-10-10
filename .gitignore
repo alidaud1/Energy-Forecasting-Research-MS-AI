@@ -264,3 +264,14 @@ react_workbench/node_modules/
 **/__pycache__/
 **/.pytest_cache/
 joint_outputs/
+
+# Journal experiment sources are tracked; local evidence and environments are not.
+/elsevier_paper/.research-deps/
+/elsevier_paper/experiments/*/
+/elsevier_paper/experiments/*.json
+/elsevier_paper/experiments/*.csv
+/elsevier_paper/experiments/*.png
+/elsevier_paper/experiments/*.pdf
+/elsevier_paper/figures/
+/elsevier_paper/architecture_diagram.html
+/elsevier_paper/colab_reproducibility/
